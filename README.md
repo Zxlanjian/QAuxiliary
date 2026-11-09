@@ -13,6 +13,33 @@
 
 QAuxiliary 是一个基于 QNotified 的开源 Xposed 模块
 
+## 本 Fork 的改动：QQ 8.8.50 兼容性修复
+
+本仓库是 `cinit/QAuxiliary` `main@4791fc9`（对应 `1.6.1.r3054.4791fc9`）的 fork，
+额外包含针对 **QQ 8.8.50（versionCode 2324）** 的兼容性修复与两个实验性功能：
+
+- **失效 hook 修复**：把 82 份导出 hook 清单与 QQ 8.8.50 的完整方法索引
+  （23 个 dex / 1,122,776 条签名）逐条比对，修掉 3 处签名漂移
+  （`TroopDocsPreviewConfigProcessor`、`DBFixDialogUI.v`→`a`、`TroopFileShowAdapter` 路径迁移），
+  并放宽 3 个把 8.8.50 错误排除在外的版本门（`ChangeFriendsVip`、`ShowServiceRemove`、
+  `ForceEnableMultiForward`）。
+- **实验性功能 · 修复多行消息显示折叠**（`FixPatchedTextViewMeasure`）：
+  重写 `PatchedTextView.onMeasure`，异常回退时保留 `Spanned` 而不是 `getText().toString()`。
+  原先是一个独立的 libxposed API 102 模块，现已合并进模块本体。
+- **实验性功能 · 强制显示高版本分享卡片**（`ForceShowHighVersionStructMsg`）：
+  清掉 `StructMsgForGeneralShare.mMsgException`，让 `messageVersion` 不匹配的结构化消息
+  走正常渲染，而不是只显示「请升级QQ」的灰字气泡。
+
+结论与证据：见 [`docs/CHANGES_qq8850.md`](docs/CHANGES_qq8850.md)、
+[`docs/hook_fix_plan.md`](docs/hook_fix_plan.md)、
+[`docs/share_card_analysis.md`](docs/share_card_analysis.md)。
+
+> 注意：8.8.50 是 NT 架构之前的客户端，`com.tencent.qqnt.*` / `com.tencent.mobileqq.aio.*` /
+> `com.tencent.android.androidbypass.*` 整包在它的 dex 中不存在。依赖这些包的功能
+> （AI、小程序、频道、部分 NT 专属 hook）在 8.8.50 上无法工作，不是本 fork 能修复的范围。
+>
+> 构建说明见 [`BUILDING.md`](BUILDING.md)（上游 CI 会自动构建，本地构建的坑都在里面）。
+
 ## 使用方法
 
 激活本模块后，在 QQ 或者 TIM 自带设置中点击 QAuxiliary 即可进入设置页面
