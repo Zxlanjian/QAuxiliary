@@ -22,7 +22,6 @@
 
 package cc.ioctl.hook.guild
 
-import com.github.kyuubiran.ezxhelper.utils.findMethod
 import com.tencent.mobileqq.data.MessageRecord
 import com.tencent.mobileqq.guild.message.api.IGuildNicknameApi
 import com.tencent.mobileqq.qroute.QRoute
@@ -107,13 +106,21 @@ object RevokeGuildMsg : CommonSwitchFunctionHook(SyncUtils.PROC_MAIN or SyncUtil
                 it.args[1] = wording
             }
 
-        "com/tencent/mobileqq/guild/message/eventflow/api/impl/GuildEventFlowServiceImpl".clazz!!.findMethod {
-            name == "processUpdateEvent"
-        }.hookBefore(this) {
-            if (it.args[1].get("msgtype") != it.args[2].get("msgtype")) {
-                it.result = true
+        // 8.8.50 的 GuildEventFlowServiceImpl 没有 processUpdateEvent —— 该版本走的是
+        // processEvent(MessageRecord, common$Event, String, String, J)Z / processEvents(...)，
+        // 且 processEvent 内部已经对 event.type(1=撤回, 2=删除) 做了过滤并 return true，
+        // 旧版 hook 想补的「事件类型变化时接管」在 8.8.50 上由客户端自身完成。
+        // 这里改成按名字安全探测：命中才 hook，未命中静默跳过，
+        // 不再让 ezxhelper 的 findMethod 抛 NoSuchMethodException 打断整个 initOnce
+        // （前两处 hook 已经装上，防撤回主体不依赖这一段）。
+        "com/tencent/mobileqq/guild/message/eventflow/api/impl/GuildEventFlowServiceImpl"
+            .clazz!!.declaredMethods
+            .firstOrNull { it.name == "processUpdateEvent" }
+            ?.hookBefore(this) {
+                if (it.args[1].get("msgtype") != it.args[2].get("msgtype")) {
+                    it.result = true
+                }
             }
-        }
     }
 
     private fun getNickName(

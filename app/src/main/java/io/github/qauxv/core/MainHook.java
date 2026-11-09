@@ -48,6 +48,7 @@ import cc.ioctl.util.HostInfo;
 import cc.ioctl.util.Reflex;
 import io.github.qauxv.chainloader.detail.ExternalModuleChainLoader;
 import io.github.qauxv.chainloader.detail.ui.ExternalModuleConfigHook;
+import io.github.qauxv.hook.experimental.KeepBgMsgForAntiRevoke;
 import io.github.qauxv.util.xpcompat.XC_MethodHook;
 import io.github.qauxv.util.xpcompat.XposedBridge;
 import io.github.qauxv.config.ConfigItems;
@@ -120,6 +121,7 @@ public class MainHook {
         HookInstaller.allowEarlyInit(DisableQQCrashReportManager.INSTANCE);
         if (!safeMode) {
             HookInstaller.allowEarlyInit(RevokeMsgHook.INSTANCE);
+            HookInstaller.allowEarlyInit(KeepBgMsgForAntiRevoke.INSTANCE);
             HookInstaller.allowEarlyInit(MuteQZoneThumbsUp.INSTANCE);
             HookInstaller.allowEarlyInit(MuteAtAllAndRedPacket.INSTANCE);
             HookInstaller.allowEarlyInit(GagInfoDisclosure.INSTANCE);

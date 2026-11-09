@@ -59,6 +59,19 @@ public class TurnOffFriendInteractionLogoView extends CommonSwitchFunctionHook {
         return true;
     }
 
+    /**
+     * QQ 8.8.50 里既没有 com.tencent.mobileqq.profilecard.component.ProfileIntimateComponent，
+     * 也没有 initComponentViewContainer 这个方法（methods 索引里 profilecard/component 下只有
+     * BaseProfileFavorComponent / ProfileFavorComponent / ElegantProfileFavorComponent，
+     * 「好友互动标识」组件是后续版本才进资料卡的）。目标点不存在、也没有语义等价的替代类，
+     * 所以用类存在性做门：老客户端上不展示、不初始化，避免每次启动抛 ReflectException。
+     */
+    @Override
+    public boolean isAvailable() {
+        return io.github.qauxv.util.ClassAvailabilityKt.classExists(
+                "com.tencent.mobileqq.profilecard.component.ProfileIntimateComponent");
+    }
+
     @NonNull
     @Override
     public String getName() {

@@ -40,6 +40,7 @@ import io.github.qauxv.base.annotation.UiItemAgentEntry
 import io.github.qauxv.dsl.FunctionEntryRouter
 import io.github.qauxv.hook.CommonSwitchFunctionHook
 import io.github.qauxv.ui.CommonContextWrapper
+import io.github.qauxv.util.classExists
 import io.github.qauxv.util.dexkit.DexKit
 import io.github.qauxv.util.dexkit.SharePanelSceneData
 import io.github.qauxv.util.dexkit.SharePanel_Handler_OtherApp_openImageByOtherApp
@@ -58,6 +59,14 @@ object PhotoShareHook : CommonSwitchFunctionHook(targets = arrayOf(
     override val name = "聊天照片分享增强"
     override val description = "替换外部打开为打开分享复制"
     override val uiItemLocation = FunctionEntryRouter.Locations.Auxiliary.MESSAGE_CATEGORY
+
+    // 8.8.50 里 com.tencent.mobileqq.sharepanel 整包不存在（methods 索引中 sharepanel 命中 0 条），
+    // SharePanelSceneData / SharePanel_Handler_OtherApp_* 三个 DexKit target 全部解析失败，
+    // initOnce 第一步 requireClassFromCache 就抛 ClassNotFoundException。
+    // 该版本外部分享走的是系统 Intent + ShareActionSheet，没有可替代的 SharePanel 场景数据结构，
+    // 因此判为在 8.8.50 上不可修：用类存在性做门，让它从设置里消失、不再每次启动报错。
+    override val isAvailable: Boolean =
+        classExists("com.tencent.mobileqq.sharepanel.config.SharePanelSceneData")
 
     override fun initOnce(): Boolean {
         DexKit.requireClassFromCache(SharePanelSceneData)

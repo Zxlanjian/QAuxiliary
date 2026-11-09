@@ -47,7 +47,9 @@ import io.github.qauxv.util.Initiator
 import io.github.qauxv.util.Log
 import io.github.qauxv.util.QQVersion
 import io.github.qauxv.util.QQVersion.*
+import io.github.qauxv.util.classExists
 import io.github.qauxv.util.dexkit.DexKit
+import io.github.qauxv.util.dexkit.DexKitTarget
 import io.github.qauxv.util.dexkit.QQSettingMeABTestHelper_isZPlanExpGroup_New
 import io.github.qauxv.util.dexkit.QQSettingMeABTestHelper_isZplanExpGroup_Old
 import io.github.qauxv.util.dexkit.QQ_SETTING_ME_CONFIG_CLASS
@@ -63,17 +65,45 @@ import java.util.SortedMap
 import io.github.qauxv.util.PlayQQVersion
 import io.github.qauxv.util.requireRangePlayQQVersion
 
+/**
+ * QQ 8.8.50(2324) 兼容：三个 DexKit target 在该版本上全部 0 命中，无条件下预扫描必然失败。
+ *
+ * 证据（`analysis/methods_8.8.50.txt`，112 万条签名全量索引）：
+ *  - `rg QQSettingMeABTestHelper methods_8.8.50.txt` → 0 命中，类 `com.tencent.mobileqq.QQSettingMeABTestHelper`
+ *    整包不存在（该 AB helper 是 8.9.90+ 才引入的）。
+ *  - `QQ_SETTING_ME_CONFIG_CLASS` 的特征串 "超级QQ秀" / "财富小金库" 在解压出的 23 个 dex 里 0 命中，
+ *    同一 target 的 StringVector 要求整组命中，因此在 8.8.50 也匹配不到。
+ *
+ * DexKit 的调用点 `DexKit.requireMethodFromCache()` 在缓存为空时直接
+ * `throw NoSuchMethodException("DexTarget: " + target.name)`（DexKit.kt:135-137），
+ * 这就是清单里 `NoSuchMethodException: DexTarget: QQSettingMeABTestHelper_isZplanExpGroup_Old` 的来源。
+ *
+ * 处理：按宿主版本裁剪预扫描列表。8.8.50（< 8.9.90）不预扫描任何 target —— 该版本下
+ * 侧滑栏精简走的是 `com.tencent.mobileqq.activity.QQSettingMe` 的构造函数 + 布局遍历路径，
+ * 完全不依赖这三个 target，主功能不受影响；只有「下拉形象展示」这个 AB 子项需要另行门控。
+ */
+// 注意：本文件 import 了 java.lang.reflect.Array，会遮蔽 kotlin.Array，返回类型必须显式限定。
+private fun resolveSimplifyQQSettingMeTargets(): kotlin.Array<DexKitTarget> = try {
+    when {
+        requireMinQQVersion(QQ_9_0_20) ->
+            arrayOf(QQ_SETTING_ME_CONFIG_CLASS, QQSettingMeABTestHelper_isZPlanExpGroup_New)
+
+        requireMinQQVersion(QQ_8_9_90) ->
+            arrayOf(QQ_SETTING_ME_CONFIG_CLASS, QQSettingMeABTestHelper_isZplanExpGroup_Old)
+
+        else -> emptyArray()
+    }
+} catch (t: Throwable) {
+    emptyArray()
+}
+
 //侧滑栏精简
 @FunctionHookEntry
 @UiItemAgentEntry
 object SimplifyQQSettingMe :
     MultiItemDelayableHook(
         "SimplifyQQSettingMe",
-        targets = arrayOf(
-            QQ_SETTING_ME_CONFIG_CLASS,
-            QQSettingMeABTestHelper_isZPlanExpGroup_New,
-            QQSettingMeABTestHelper_isZplanExpGroup_Old,
-        )
+        targets = resolveSimplifyQQSettingMeTargets()
     ) {
 
     const val MidContentName = "SimplifyQQSettingMe::MidContentName"
@@ -351,7 +381,11 @@ object SimplifyQQSettingMe :
 
         // 关闭下拉形象展示abtest开关
         if (activeItems.contains("下拉形象展示")) {
-            if (requireMinQQVersion(QQ_9_0_20)) {
+            // QQ 8.8.50 没有 QQSettingMeABTestHelper（整包 0 命中），该子项在本版本无可 hook 点：
+            // 先探测类是否存在，不存在就跳过，避免 requireMethodFromCache 抛 NoSuchMethodException。
+            if (!classExists("com.tencent.mobileqq.QQSettingMeABTestHelper")) {
+                Log.w("SimplifyQQSettingMe: QQSettingMeABTestHelper 不存在于当前版本，跳过「下拉形象展示」")
+            } else if (requireMinQQVersion(QQ_9_0_20)) {
                 DexKit.requireMethodFromCache(QQSettingMeABTestHelper_isZPlanExpGroup_New).hookReturnConstant(false)
             } else {
                 DexKit.requireMethodFromCache(QQSettingMeABTestHelper_isZplanExpGroup_Old).hookReturnConstant(false)

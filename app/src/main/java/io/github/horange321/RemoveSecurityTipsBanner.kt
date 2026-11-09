@@ -27,6 +27,7 @@ import io.github.qauxv.base.annotation.FunctionHookEntry
 import io.github.qauxv.base.annotation.UiItemAgentEntry
 import io.github.qauxv.dsl.FunctionEntryRouter.Locations.Simplify
 import io.github.qauxv.hook.CommonSwitchFunctionHook
+import io.github.qauxv.util.classExists
 import io.github.qauxv.util.dexkit.DexKit.requireMethodFromCache
 import io.github.qauxv.util.dexkit.RemoveSecurityTipsBanner_Method
 
@@ -36,6 +37,13 @@ import io.github.qauxv.util.dexkit.RemoveSecurityTipsBanner_Method
 object RemoveSecurityTipsBanner :
     CommonSwitchFunctionHook("removeSecurityTipsBanner", arrayOf(RemoveSecurityTipsBanner_Method)) {
     override val name = "隐藏群聊风险提醒"
+
+    // 目标类 com.tencent.mobileqq.troop.tipsbar.TroopSecurityTipsBanner 在 QQ 8.8.50 里整包不存在
+    // （索引里 troop/ 下只有 TroopAioTips / TroopAioBlueTipsView / jointroopsecuritytips 系列），
+    // 所以 RemoveSecurityTipsBanner_Method 永远解析不到，initOnce 必抛 NoSuchMethodException。
+    // 用类存在性做门：老客户端上该功能直接不展示、不初始化。
+    override val isAvailable: Boolean =
+        classExists("com.tencent.mobileqq.troop.tipsbar.TroopSecurityTipsBanner")
     override val uiItemLocation: Array<String> = Simplify.CHAT_GROUP_TITLE
     override val description = "移除群聊顶部风险提醒"
 

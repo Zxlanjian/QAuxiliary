@@ -269,3 +269,40 @@ metaList, density, msg, session)Z`，返回值被直接丢弃（无 `move-result
 | `:app:compileDebugKotlin` | ✅ BUILD SUCCESSFUL |
 | `:app:assembleDebug` | ✅ 出包 `QAuxiliary-1.6.1-qq8850-r2-20261109.apk`（20 MB） |
 | 实机复测 | ⏳ 需重装后重新导出清单确认 errors 归零 |
+
+---
+
+## 八、第三轮：合并 Ark 转换方案 + 后台保活（2026-11-09 晚）
+
+来源：用户提供的 `push_ci.txt`（GitHub Actions 脚本，内含 base64+xz 打包的 7 个源文件）。
+解包后逐文件比对，采纳其中 6 个，保留本仓库自己的 `ForceShowHighVersionStructMsg.kt`。
+
+### 8.1 Ark 卡片不再只能降级为文本
+
+第二轮我给的 `ArkFallbackToText` 只能把 Ark 气泡变成文本（因为 8.8.50 的卡片渲染在 native libark 里，
+Java 层没有判定分支）。gemini 的方案更进一步：**把新版 Ark JSON 原地改写成旧版认识的
+`com.tencent.structmsg` + `view=news`**，交给 8.8.50 内置的 libark 渲染成真正的图文卡片。
+
+| 文件 | 说明 |
+| --- | --- |
+| `me/singleneuron/data/StructMsgData.kt` | 新增 `fromArkJsonObject()` / `shouldConvertToStructMsg()` / `tryConvertArkAppMessage()`：`meta.detail_1`（小程序）、`meta.news`/`miniapp`/`music`/任意首个对象（图文分享）都能抽成 structmsg news；用 `getDeclaredMethod` 直接反射 `toAppXml`/`fromAppXml`，**绕开 `Reflex.invokeVirtual` 的参数布局坑**（见 7.3）；转换后清 `mExtra` 并重置 `MessageForArkApp.arkContainer` 缓存，否则气泡不重绘 |
+| `me/singleneuron/hook/decorator/MiniAppToStruckMsg.kt` | 改为调用 `StructMsgData.tryConvertArkAppMessage()`，不再只认 `com.tencent.miniapp`，`com.tencent.tuwen.lua` 这类图文分享一并处理；description 同步更新 |
+| `io/github/qauxv/hook/experimental/ArkFallbackToText.kt` | 改为两级：先转 structmsg 卡片（能渲染出卡片），只有在没有可转换 `meta` 时才回退文本气泡 |
+| `me/singleneuron/data/MiniAppArkData.kt` | 配套数据结构调整 |
+
+### 8.2 新增：后台保持消息加载并压制耗电（`KeepBgMsgForAntiRevoke`）
+
+解决「防撤回提示『没收到』」的根因：QQ 退后台后 `AppRuntime.isBackground_Stop` 置 true，
+消息拉取管线停摆，撤回通知先到、原消息还没入库。
+
+- 维持 `isBackground_Stop=false`、保留 `isBackground_Pause=true`（仍能正常弹系统通知）
+- 拦截后台 `GuardManager` / `Process.killProcess` / `Runtime.exit` 的主进程自杀（带崩溃/登出/设置页白名单，不拦正常退出）
+- `onTrimMemory` 等级封顶 `TRIM_MEMORY_UI_HIDDEN`
+- 后台 15 秒后清理附属子进程（保留主进程与 MSF），限制 `WakeLock` 持有 ≤5 秒，屏蔽后台埋点
+- 默认关闭；`MainHook` 里与 `RevokeMsgHook` 一起 `allowEarlyInit`
+
+依赖已在 8.8.50 验证：`isBackground_Stop` / `isBackground_Pause` 字段存在，
+`Lmqq/app/AppRuntime;->onRunningBackground()V` 存在。
+
+**风险提示**（未实机验证）：进程自杀拦截与子进程清理属于侵入性改动，误判会导致 QQ 无法正常退出/重启；
+所有 hook 点都包了 `runCatching` 且有白名单，但首次开启建议观察一天。

@@ -29,6 +29,7 @@ import android.view.Gravity
 import android.view.View
 import android.widget.TextView
 import com.github.kyuubiran.ezxhelper.utils.Hooker
+import com.github.kyuubiran.ezxhelper.utils.hookAfter
 import com.github.kyuubiran.ezxhelper.utils.hookBefore
 import io.github.qauxv.base.annotation.FunctionHookEntry
 import io.github.qauxv.base.annotation.UiItemAgentEntry
@@ -36,26 +37,28 @@ import io.github.qauxv.dsl.FunctionEntryRouter
 import io.github.qauxv.hook.CommonSwitchFunctionHook
 import io.github.qauxv.util.Initiator
 import io.github.qauxv.util.Log
+import me.singleneuron.data.StructMsgData
 import org.json.JSONObject
 import xyz.nextalone.util.throwOrTrue
 import java.lang.reflect.Field
 
 /**
- * Ark 卡片降级为可点击文本。
+ * Ark 卡片转旧版分享卡片（兼容渲染与文本兜底）。
  *
  * 背景：8.8.50 的 Ark 渲染链路是
  *   MessageForArkApp → ArkAppItemBubbleBuilder.getView
  *     → new ArkAioContainerWrapper().a(appName, appView, appMinVersion, metaList, density, msg, session)
  *     → ArkAppView（native libark 容器）真正渲染
- * Java 层 **没有任何「app 不支持」的判定分支**：`ArkAioContainerWrapper.a(...)` 虽然返回 boolean，
- * 但 getView 在 `0x011b` 调用后没有 move-result，返回值被直接丢弃。也就是说
- * 「未知 app / view 不支持」的降级发生在 native Ark 容器内部，Java 侧无从 hook。
  *
- * 因此本 hook 不去改渲染决策，而是在 getView **进入前**直接换掉返回值：
- * 用 ArkAppMessage 里已有的文本字段拼一个可点击 TextView，
- *   文本：promptText → mText → compatibleText（依次兜底）
- *   点击：metaList 里第一个 view 对象的 jumpUrl → mSourceUrl
- * 这样即使 Ark 容器渲染不出来，用户也能看到分享标题并点开链接。
+ * 旧客户端（如 8.8.50）的 native libark 内置支持 `com.tencent.structmsg` (`view = "news"`, `ver = "0.0.0.1"`)
+ * 这种标准结构化图文卡片，但高版本 QQ 下发的 `com.tencent.tuwen.lua`、`com.tencent.miniapp*` 等新版/Lua
+ * Ark 卡片在 8.8.50 中不存在对应的本地包，直接渲染会提示版本不支持或白屏。
+ *
+ * 本 hook 在 `MessageForArkApp.doParse` 之后以及 `ArkAppItemBubbleBuilder.getView` 进入前：
+ * 1. 优先参考小程序转卡片（`StructMsgData`）的结构，将 `com.tencent.tuwen.lua` 等 Ark 卡片的
+ *    `ark_app_message` 原地转换为 `com.tencent.structmsg` (`view = "news"`) 卡片代码，交由原生
+ *    `ArkAppView` 渲染出完整的图文卡片；
+ * 2. 仅当某条 Ark 消息不含可转换的 `meta` 结构时，才回退为可点击的文本气泡兜底。
  */
 @FunctionHookEntry
 @UiItemAgentEntry
@@ -63,13 +66,13 @@ object ArkFallbackToText : CommonSwitchFunctionHook("qauxv_ark_fallback_to_text"
 
     private const val TAG = "ArkFallbackToText"
     private const val CLS_BUILDER = "com.tencent.mobileqq.activity.aio.item.ArkAppItemBubbleBuilder"
+    private const val CLS_ARK_MSG = "com.tencent.mobileqq.data.MessageForArkApp"
     private const val FIELD_ARK_MSG = "ark_app_message"
 
-    override val name = "Ark 卡片降级为文本"
+    override val name = "Ark 卡片转旧版卡片（兼容渲染）"
 
-    override val description = "Ark 卡片在 8.8.50 渲染不出来时，改用文本气泡显示分享标题，并支持点击打开链接。" +
-        "文本取自 ArkAppMessage.promptText / mText / compatibleText，链接取自 metaList 的 jumpUrl 或 mSourceUrl。" +
-        "开启后所有 Ark 消息都会变成文本气泡（不再显示卡片）。"
+    override val description = "将 com.tencent.tuwen.lua、小程序等新版 Ark 卡片自动转换为旧版支持的 " +
+        "com.tencent.structmsg (news) 卡片代码以正常显示图文卡片；无法转换的特殊 Ark 消息则降级为可点击文本气泡。"
 
     override val uiItemLocation = FunctionEntryRouter.Locations.Auxiliary.EXPERIMENTAL_CATEGORY
 
@@ -105,8 +108,12 @@ object ArkFallbackToText : CommonSwitchFunctionHook("qauxv_ark_fallback_to_text"
         return try {
             val root = JSONObject(metaList)
             val key = root.keys().asSequence().firstOrNull() ?: return null
-            root.optJSONObject(key)?.optString("jumpUrl")?.takeIf { it.isNotEmpty() }
-        } catch (t: Throwable) {
+            val detail = root.optJSONObject(key) ?: return null
+            detail.optString("jumpUrl")
+                .ifEmpty { detail.optString("qqdocurl") }
+                .ifEmpty { detail.optString("url") }
+                .takeIf { it.isNotEmpty() }
+        } catch (_: Throwable) {
             null
         }
     }
@@ -123,37 +130,56 @@ object ArkFallbackToText : CommonSwitchFunctionHook("qauxv_ark_fallback_to_text"
         }
     }
 
-    private val replaceWithText: Hooker = { param ->
-        try {
-            val message = param.args?.getOrNull(0)
-            // args[3] 是 BaseChatItemLayout（ViewGroup），用它拿 Context 最稳
-            val host = param.args?.getOrNull(3) as? View
-            val context = host?.context
-            val arkMessage = readField(message, FIELD_ARK_MSG)
+    private val afterDoParse: Hooker = { param ->
+        if (isEnabled) {
+            try {
+                val message = param.thisObject
+                val arkMessage = readField(message, FIELD_ARK_MSG)
+                StructMsgData.tryConvertArkAppMessage(arkMessage, message)
+            } catch (t: Throwable) {
+                traceError(t)
+            }
+        }
+    }
 
-            val text = readString(arkMessage, "promptText")
-                ?: readString(arkMessage, "mText")
-                ?: readString(arkMessage, "compatibleText")
+    private val convertOrFallbackBeforeGetView: Hooker = { param ->
+        if (isEnabled) {
+            try {
+                val message = param.args?.getOrNull(0)
+                val arkMessage = readField(message, FIELD_ARK_MSG)
 
-            if (context != null && text != null) {
-                val url = extractJumpUrl(readString(arkMessage, "metaList"))
-                    ?: readString(arkMessage, "mSourceUrl")
-                val textView = TextView(context).apply {
-                    this.text = text
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                    gravity = Gravity.CENTER_VERTICAL
-                    val pad = (12 * resources.displayMetrics.density).toInt()
-                    setPadding(pad, pad, pad, pad)
-                    maxLines = 4
-                    if (url != null) {
-                        setOnClickListener { openUrl(this, url) }
+                // 1. 优先尝试转换为 com.tencent.structmsg (view="news") 让原生 ArkAppView 渲染为图文卡片
+                if (StructMsgData.tryConvertArkAppMessage(arkMessage, message)) {
+                    Log.d("$TAG: converted ark message to com.tencent.structmsg card")
+                } else {
+                    // 2. 无法转换为 structmsg 卡片时，降级为可点击文本气泡兜底
+                    val host = param.args?.getOrNull(3) as? View
+                    val context = host?.context
+                    val text = readString(arkMessage, "promptText")
+                        ?: readString(arkMessage, "mText")
+                        ?: readString(arkMessage, "compatibleText")
+
+                    if (context != null && text != null) {
+                        val url = extractJumpUrl(readString(arkMessage, "metaList"))
+                            ?: readString(arkMessage, "mSourceUrl")
+                        val textView = TextView(context).apply {
+                            this.text = text
+                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                            gravity = Gravity.CENTER_VERTICAL
+                            val pad = (12 * resources.displayMetrics.density).toInt()
+                            setPadding(pad, pad, pad, pad)
+                            maxLines = 4
+                            if (url != null) {
+                                setOnClickListener { openUrl(this, url) }
+                            }
+                        }
+                        param.result = textView
+                        Log.d("$TAG: degraded ark ${readString(arkMessage, "appName")}/${readString(arkMessage, "appView")} to text, url=$url")
                     }
                 }
-                param.result = textView
-                Log.d("$TAG: degraded ark ${readString(arkMessage, "appName")}/${readString(arkMessage, "appView")} to text, url=$url")
+            } catch (t: Throwable) {
+                traceError(t)
             }
-        } catch (t: Throwable) {
-            traceError(t)
         }
     }
 
@@ -167,7 +193,14 @@ object ArkFallbackToText : CommonSwitchFunctionHook("qauxv_ark_fallback_to_text"
             "getView(ChatMessage,ViewHolder,View,BaseChatItemLayout,OnLongClickAndTouchListener) not found in ${clazz.name}"
         )
 
-        getView.hookBefore(replaceWithText)
+        getView.hookBefore(convertOrFallbackBeforeGetView)
+
+        // 同时 hook MessageForArkApp.doParse，使消息首次反序列化时即完成卡片结构转换（复制卡片代码等场景也一并生效）
+        runCatching {
+            val arkMsgClz = Initiator.loadClass(CLS_ARK_MSG)
+            arkMsgClz.getDeclaredMethod("doParse").hookAfter(afterDoParse)
+        }
+
         Log.d("$TAG: hooked ${clazz.name}.${getView.name}(${getView.parameterTypes.joinToString { it.simpleName }})")
     }
 }
