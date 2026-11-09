@@ -46,13 +46,19 @@ object DisableGrowHalfLayer : CommonSwitchFunctionHook(
     override val name = "屏蔽广告弹窗(测试版)"
     override val description = "屏蔽打开QQ时随缘弹出的(小Q提醒)弹窗"
     override val uiItemLocation = FunctionEntryRouter.Locations.Auxiliary.EXPERIMENTAL_CATEGORY
-    override val isAvailable = requireMinQQVersion(QQVersion.QQ_8_9_88)
+    override val isAvailable = requireMinQQVersion(QQVersion.QQ_8_8_50)
 
     override fun initOnce(): Boolean {
-        hookBeforeIfEnabled(DexKit.requireMethodFromCache(Hd_DisableGrowHalfLayer_Method1)) { param ->
-            printStackTrace("屏蔽广告弹窗 -> 测试1")
-            Toasts.show("屏蔽广告弹窗 -> 测试1成功")
-            param.result = null
+        // 8.8.50 ~ 9.2.x: grow_half_layer_info 特征串已从 VasADBannerManager 移除,
+        // Hd_DisableGrowHalfLayer_Method1 解析不到; 仅 Method2 (VasADBannerManager.g()V,
+        // "start showVasADBanner") 可用。Method1 改为可选, 避免 NoSuchMethodException
+        // 让整个 initOnce 失败。
+        DexKit.loadMethodFromCache(Hd_DisableGrowHalfLayer_Method1)?.let { method ->
+            hookBeforeIfEnabled(method) { param ->
+                printStackTrace("屏蔽广告弹窗 -> 测试1")
+                Toasts.show("屏蔽广告弹窗 -> 测试1成功")
+                param.result = null
+            }
         }
         hookBeforeIfEnabled(DexKit.requireMethodFromCache(Hd_DisableGrowHalfLayer_Method2)) { param ->
             printStackTrace("屏蔽广告弹窗 -> 测试2")
