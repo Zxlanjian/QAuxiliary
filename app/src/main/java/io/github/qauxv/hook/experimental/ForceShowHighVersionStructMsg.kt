@@ -66,7 +66,7 @@ object ForceShowHighVersionStructMsg :
     override val description = "清掉 StructMsgForGeneralShare 的 mMsgException 标记，" +
         "让 messageVersion 不匹配的二进制结构化消息走正常渲染，而不是只显示「请升级QQ」的灰字气泡。" +
         "注意：只对二进制 structmsg（msgType -2011）生效；app/view/meta 这种 Ark 消息（msgType -5008）" +
-        "的渲染在 native libark 里，本开关无效，请用「Ark 卡片降级为文本」。" +
+        "的渲染在 native libark 里，请配合「Ark 卡片转旧版卡片（兼容渲染）」使用。" +
         "服务端按更高版本布局下发的字段可能残缺，极端情况下会显示不完整的卡片。"
 
     override val uiItemLocation = FunctionEntryRouter.Locations.Auxiliary.EXPERIMENTAL_CATEGORY
