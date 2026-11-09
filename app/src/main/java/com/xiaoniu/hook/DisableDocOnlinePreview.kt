@@ -35,11 +35,23 @@ object DisableDocOnlinePreview : CommonSwitchFunctionHook() {
     override val name = "禁用文档在线预览"
 
     override fun initOnce(): Boolean {
-        "Lcom/tencent/mobileqq/filemanager/fileviewer/docs/TroopDocsPreviewConfigProcessor;->parse([B)Lcom/tencent/freesia/IConfigData;".method.hookBefore {
+        // QQ 8.9.0+ 路径：parse([B) 直接返回 IConfigData，用 defaultConfig() 覆盖服务器下发配置
+        val legacyHooked = runCatching {
+            ("Lcom/tencent/mobileqq/filemanager/fileviewer/docs/TroopDocsPreviewConfigProcessor;->" +
+                "parse([B)Lcom/tencent/freesia/IConfigData;").method.hookBefore {
+                it.result =
+                    ("Lcom/tencent/mobileqq/filemanager/fileviewer/docs/TroopDocsPreviewConfigProcessor;->" +
+                        "defaultConfig()Lcom/tencent/freesia/IConfigData;").method.invoke(it.thisObject)
+            }
+        }.isSuccess
+        if (legacyHooked) return true
+        // QQ 8.8.50 路径：该类改为继承 IQConfigProcessor<TroopDocsPreviewConfigBean>，
+        // parse 被 r8 合并进 onParsed(QConfItem[])，默认配置由 migrateOldOrDefaultContent(int) 产出。
+        ("Lcom/tencent/mobileqq/filemanager/fileviewer/docs/TroopDocsPreviewConfigProcessor;->" +
+            "onParsed([Lcom/tencent/mobileqq/config/QConfItem;)Ljava/lang/Object;").method.hookBefore {
             it.result =
-                "Lcom/tencent/mobileqq/filemanager/fileviewer/docs/TroopDocsPreviewConfigProcessor;->defaultConfig()Lcom/tencent/freesia/IConfigData;".method.invoke(
-                    it.thisObject
-                )
+                ("Lcom/tencent/mobileqq/filemanager/fileviewer/docs/TroopDocsPreviewConfigProcessor;->" +
+                    "migrateOldOrDefaultContent(I)Ljava/lang/Object;").method.invoke(it.thisObject, 0)
         }
         return true
     }

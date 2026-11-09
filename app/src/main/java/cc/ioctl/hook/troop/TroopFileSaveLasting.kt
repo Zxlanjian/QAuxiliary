@@ -53,7 +53,12 @@ object TroopFileSaveLasting : PluginDelayableHook("ketal_TroopFileSaveLasting") 
             else "com.tencent.mobileqq.troop.data.TroopFileShowAdapter$1"
             ).findClass(classLoader).getDeclaredField("this$0").type
         } catch (e: Throwable) {
-            "com.tencent.mobileqq.troop.data.TroopFileShowAdapter".findClass(classLoader)
+            // QQ 8.8.50: TroopFileShowAdapter 位于 troop/filemanager/data/ 且无 $1 内部类
+            sequenceOf(
+                "com.tencent.mobileqq.troop.filemanager.data.TroopFileShowAdapter",
+                "com.tencent.mobileqq.troop.data.TroopFileShowAdapter"
+            ).mapNotNull { runCatching { it.findClass(classLoader) }.getOrNull() }.firstOrNull()
+                ?: throw e
         }
         val infoClass = troopFileShowAdapter.declaredFields.find {
             it.type == List::class.java

@@ -32,6 +32,8 @@ import io.github.qauxv.base.annotation.UiItemAgentEntry
 import io.github.qauxv.dsl.FunctionEntryRouter
 import io.github.qauxv.hook.CommonSwitchFunctionHook
 import io.github.qauxv.util.Initiator
+import io.github.qauxv.util.QQVersion
+import io.github.qauxv.util.requireMinQQVersion
 
 @FunctionHookEntry
 @UiItemAgentEntry
@@ -51,5 +53,6 @@ object ForceEnableMultiForward : CommonSwitchFunctionHook() {
         return true;
     }
 
-    override val isAvailable = QAppUtils.isQQnt();
+    // 目标 ForwardRecentActivity.initEntryHeaderView()V 在 8.8.50 已存在（旧架构非 NT），补 8.8.50 短路
+    override val isAvailable = QAppUtils.isQQnt() || requireMinQQVersion(QQVersion.QQ_8_8_50);
 }

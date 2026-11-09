@@ -349,7 +349,12 @@ dependencies {
     implementation(libs.material)
     implementation(libs.material.dialogs.core)
     implementation(libs.material.dialogs.input)
-    implementation(libs.weatherView)
+    implementation(libs.weatherView) {
+        // com.github.plattysoft:Leonids (transitive of WeatherView) is only published on
+        // maven.tmpfs.dev, which currently answers 502, and is absent from jitpack/mavenCentral.
+        // The particle animation is only used by the optional festival weather effect.
+        exclude(group = "com.github.plattysoft", module = "Leonids")
+    }
     implementation(libs.google.protobuf.java)
     implementation(libs.kotlinx.coroutines)
     implementation(libs.kotlinx.serialization.json)

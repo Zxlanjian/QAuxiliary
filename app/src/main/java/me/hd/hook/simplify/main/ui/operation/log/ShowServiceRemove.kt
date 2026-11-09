@@ -41,7 +41,8 @@ object ShowServiceRemove : CommonSwitchFunctionHook() {
     override val description = "动态-更多, 业务页可移除游戏中心等"
     override val extraSearchKeywords = arrayOf("游戏中心")
     override val uiItemLocation = FunctionEntryRouter.Locations.Simplify.MAIN_UI_OPERATION_LOG
-    override val isAvailable = requireMinQQVersion(QQVersion.QQ_8_9_88)
+    // 目标 LebaPluginInfo.getAllowModify()Z 在 8.8.50 已存在（<9.0.35 走 getAllowModify 分支），放宽版本门
+    override val isAvailable = requireMinQQVersion(QQVersion.QQ_8_8_50)
 
     override fun initOnce(): Boolean {
         "com.tencent.mobileqq.leba.entity.LebaPluginInfo".toHostClass()

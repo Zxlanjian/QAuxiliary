@@ -41,7 +41,8 @@ object ChangeFriendsVip : CommonSwitchFunctionHook() {
     override val name = "更改好友会员"
     override val description = "[更改好友会员] = [隐藏会员红名] + [联系人排序]"
     override val uiItemLocation = FunctionEntryRouter.Locations.Simplify.MAIN_UI_CONTACT
-    override val isAvailable = requireMinQQVersion(QQVersion.QQ_8_9_88)
+    // 目标 Friends.isServiceEnabled(LQQService/EVIPSPEC;)Z 在 8.8.50 已存在，放宽版本门
+    override val isAvailable = requireMinQQVersion(QQVersion.QQ_8_8_50)
 
     override fun initOnce(): Boolean {
         "com.tencent.mobileqq.data.Friends".toHostClass()

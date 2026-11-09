@@ -69,9 +69,15 @@ public class HideChatDatabaseCorruptDialogHook extends CommonSwitchFunctionHook 
     @Override
     public boolean initOnce() throws Exception {
         // 7f113d58
-        // Lcom/tencent/mobileqq/database/corrupt/DBFixDialogUI;->v(I)V
-        Method mMethod = Initiator.loadClass("com.tencent.mobileqq.database.corrupt.DBFixDialogUI")
-                .getDeclaredMethod("v", int.class);
+        // 旧版签名: Lcom/tencent/mobileqq/database/corrupt/DBFixDialogUI;->v(I)V
+        // QQ 8.8.50: r8 把 v(int) 重命名为 a(int)，实现未变（内部仍调用 showDialog("checked corrupt")）
+        Class<?> clazz = Initiator.loadClass("com.tencent.mobileqq.database.corrupt.DBFixDialogUI");
+        Method mMethod;
+        try {
+            mMethod = clazz.getDeclaredMethod("v", int.class);
+        } catch (NoSuchMethodException e) {
+            mMethod = clazz.getDeclaredMethod("a", int.class);
+        }
 
         HookUtils.hookBeforeIfEnabled(this, mMethod, (param) -> {
             param.setResult(null);
