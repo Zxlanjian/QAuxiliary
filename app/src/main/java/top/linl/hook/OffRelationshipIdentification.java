@@ -13,6 +13,7 @@ import io.github.qauxv.util.Initiator;
 import java.lang.reflect.Method;
 import top.linl.util.reflect.FieldUtils;
 import top.linl.util.reflect.MethodTool;
+import io.github.qauxv.util.ClassAvailabilityKt;
 
 
 @FunctionHookEntry
@@ -20,6 +21,16 @@ import top.linl.util.reflect.MethodTool;
 public class OffRelationshipIdentification extends CommonSwitchFunctionHook {
 
     public static final OffRelationshipIdentification INSTANCE = new OffRelationshipIdentification();
+
+    /**
+     * {@code ProfileInStepComponent} 属于 QQ 9.x 的资料卡组件，在 8.8.50 这类旧客户端里整包不存在。
+     * 不加这道门时，配置里残留的 isEnabled=true 会让 {@link #initOnce()} 每次启动都抛
+     * ClassNotFoundException。
+     */
+    @Override
+    public boolean isAvailable() {
+        return ClassAvailabilityKt.classExists("com.tencent.mobileqq.profilecard.component.ProfileInStepComponent");
+    }
 
     @Override
     protected boolean initOnce() throws Exception {

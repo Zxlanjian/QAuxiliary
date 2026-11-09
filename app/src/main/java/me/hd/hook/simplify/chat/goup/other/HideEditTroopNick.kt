@@ -28,6 +28,7 @@ import io.github.qauxv.base.annotation.FunctionHookEntry
 import io.github.qauxv.base.annotation.UiItemAgentEntry
 import io.github.qauxv.dsl.FunctionEntryRouter
 import io.github.qauxv.hook.CommonSwitchFunctionHook
+import io.github.qauxv.util.Log
 import io.github.qauxv.util.QQVersion
 import io.github.qauxv.util.requireMinQQVersion
 import me.hd.util.hookAfterIfEnabled
@@ -45,14 +46,24 @@ object HideEditTroopNick : CommonSwitchFunctionHook() {
     override val isAvailable = requireMinQQVersion(QQVersion.QQ_8_9_88)
 
     override fun initOnce(): Boolean {
-        "com.tencent.mobileqq.activity.editservice.EditTroopMemberNickService".toHostClass()
-            .singleMethod {
-                name("c") &&
-                    parameters(ViewGroup::class.java, EditText::class.java, ViewGroup::class.java)
-            }.hookAfterIfEnabled(this) { param ->
-                val viewGroup = param.args[2] as ViewGroup
-                viewGroup.visibility = ViewGroup.GONE
+        // QQ 8.8.50: 方法名由 c 变为 a，原条件 name("c") 导致 singleMethod 匹配为空并抛 NoSuchElementException。
+        // 改为只按参数类型匹配（8.8.50 命中 a(Landroid/view/ViewGroup;Landroid/widget/EditText;Landroid/view/ViewGroup;)V）。
+        val method = "com.tencent.mobileqq.activity.editservice.EditTroopMemberNickService".toHostClass()
+            .declaredMethods.firstOrNull { m ->
+                val p = m.parameterTypes
+                p.size == 3 && p[0] == ViewGroup::class.java &&
+                    p[1] == EditText::class.java && p[2] == ViewGroup::class.java
             }
+        if (method == null) {
+            Log.e("HideEditTroopNick: 8.8.50 找不到 (ViewGroup,EditText,ViewGroup)V 方法")
+            return false
+        }
+        method.isAccessible = true
+        Log.d("HideEditTroopNick: hooked ${method.name}")
+        method.hookAfterIfEnabled(this) { param ->
+            val viewGroup = param.args[2] as ViewGroup
+            viewGroup.visibility = ViewGroup.GONE
+        }
         return true
     }
 }

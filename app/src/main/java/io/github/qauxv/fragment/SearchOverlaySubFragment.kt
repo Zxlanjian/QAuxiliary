@@ -46,6 +46,7 @@ import com.google.android.flexbox.FlexboxLayoutManager
 import com.google.android.flexbox.JustifyContent
 import io.github.qauxv.R
 import io.github.qauxv.activity.SettingsUiFragmentHostActivity
+import io.github.qauxv.base.IDynamicHook
 import io.github.qauxv.base.IUiItemAgentProvider
 import io.github.qauxv.bridge.ntapi.RelationNTUinAndUidApi
 import io.github.qauxv.databinding.FragmentSettingSearchBinding
@@ -80,7 +81,19 @@ class SearchOverlaySubFragment {
     private var mPossibleInputUin: Long = 0L
     private var mPossibleInputUid: String? = null
     private val allItemsContainer: ArrayList<SearchResult> by lazy {
-        val items = FunctionEntryRouter.queryAnnotatedUiItemAgentEntries()
+        // 与 FunctionEntryRouter 保持一致：当前宿主版本上不可用的功能不进入搜索索引，
+        // 否则用户能搜到却点不进去（详见 FunctionEntryRouter.zwBuildUiItemDslTree 的过滤）。
+        val items = FunctionEntryRouter.queryAnnotatedUiItemAgentEntries().filter {
+            if (it is IDynamicHook) {
+                try {
+                    it.isAvailable
+                } catch (t: Throwable) {
+                    true
+                }
+            } else {
+                true
+            }
+        }
         ArrayList<SearchResult>(items.size).apply {
             items.forEach {
                 add(SearchResult(it))

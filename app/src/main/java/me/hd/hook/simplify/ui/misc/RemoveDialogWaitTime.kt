@@ -26,6 +26,7 @@ import io.github.qauxv.base.annotation.FunctionHookEntry
 import io.github.qauxv.base.annotation.UiItemAgentEntry
 import io.github.qauxv.dsl.FunctionEntryRouter
 import io.github.qauxv.hook.CommonSwitchFunctionHook
+import io.github.qauxv.util.Log
 import io.github.qauxv.util.QQVersion
 import io.github.qauxv.util.SyncUtils
 import io.github.qauxv.util.requireMinQQVersion
@@ -46,13 +47,28 @@ object RemoveDialogWaitTime : CommonSwitchFunctionHook(
     override val isAvailable = requireMinQQVersion(QQVersion.QQ_8_9_88)
 
     override fun initOnce(): Boolean {
-        "com.tencent.mobileqq.utils.DialogUtil".toHostClass()
-            .singleMethod {
-                name("createCountdownDialog") &&
-                    parameters(null, null, null, null, null, null, Int::class.java, null, null, null)
-            }.hookBeforeIfEnabled(this) { param ->
-                param.args[6] = 0
-            }
+        // QQ 8.8.50: DialogUtil 已无 createCountdownDialog，原 name+parameters 条件导致 singleMethod 抛
+        // NoSuchElementException。放宽为「10 个参数且第 7 位为 int」，找不到则记录近似候选并返回 false。
+        val dialogUtil = "com.tencent.mobileqq.utils.DialogUtil".toHostClass()
+        // 原条件 parameters(..., Int::class.java, ...) 是 java.lang.Integer.class，
+        // 而 I 参数的反射类型是 int.class（Integer.TYPE），恒不相等 —— 改用原始类型比较。
+        val method = dialogUtil.declaredMethods.firstOrNull { m ->
+            val p = m.parameterTypes
+            p.size == 10 && (p[6] == java.lang.Integer.TYPE || p[6] == Int::class.java)
+        }
+        if (method == null) {
+            val near = dialogUtil.declaredMethods
+                .filter { it.parameterTypes.contains(Int::class.java) }
+                .take(3)
+                .joinToString("; ") { it.name + it.parameterTypes.contentToString() }
+            Log.e("RemoveDialogWaitTime: 8.8.50 找不到 10 参数且第 7 位为 int 的方法; 近似候选: $near")
+            return false
+        }
+        method.isAccessible = true
+        Log.d("RemoveDialogWaitTime: hooked ${method.name}${method.parameterTypes.contentToString()}")
+        method.hookBeforeIfEnabled(this) { param ->
+            param.args[6] = 0
+        }
         return true
     }
 }

@@ -91,9 +91,30 @@ public class HookInstaller {
         return -1;
     }
 
+    /**
+     * Whether a hook can run on the current host at all, i.e. whether its {@code isAvailable}
+     * gate is satisfied.
+     * <p>
+     * {@link IDynamicHook#isEnabled()} only reflects the user's switch: {@code isAvailable} is
+     * used as the <b>default value</b> of that switch, so once the value has been written to the
+     * config (for example enabled while running a newer QQ), it is never consulted again. Hooks
+     * whose version gate does not match the current host therefore kept calling
+     * {@code initialize()} on every start, throwing, and polluting the error panel.
+     * <p>
+     * Callers should combine this with {@link IDynamicHook#isEnabled()}, not replace it.
+     */
+    public static boolean isHookApplicable(@NonNull IDynamicHook hook) {
+        try {
+            return hook.isAvailable();
+        } catch (Throwable e) {
+            Log.e("isAvailable() failed for " + hook.getClass().getName() + ", assuming usable", e);
+            return true;
+        }
+    }
+
     public static void allowEarlyInit(@NonNull IDynamicHook hook) {
         try {
-            if (hook.isTargetProcess() && hook.isEnabled() && !hook.isPreparationRequired() && !hook.isInitialized()) {
+            if (hook.isTargetProcess() && isHookApplicable(hook) && hook.isEnabled() && !hook.isPreparationRequired() && !hook.isInitialized()) {
                 hook.initialize();
             }
         } catch (Throwable e) {

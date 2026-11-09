@@ -457,3 +457,226 @@ pwsh -File jd.ps1 com.tencent.mobileqq.structmsg.StructMsgFactory
 ## 7. 一句话给决策层
 
 8.8.50 的「版本不支持」是**服务端按客户端版本下发的 structmsg 布局与本地 `messageVersion` 分段解析不匹配**造成的，客户端侧的开关就是 `StructMsgForGeneralShare.mMsgException`；把它在 `readExternal` 之后和 `getView` 之前清掉，即可让 8.8.50 用它已解析到的字段走通用分享卡片渲染。而用户看到的那句「暂不支持该消息类型」文案在 8.8.50 客户端里是**死资源**（零引用），真正显示它的是客户端之外的路径，需抓包确认。
+
+---
+
+## 6. 实机验证与修正（2026-11-09，QQ 8.8.50 / versionCode 2324）
+
+上一轮（§1–§7）把这条消息当成 **structmsg**，并给出 `mMsgException` hook。实机反馈「无效」。本节逐条纠正。
+
+### 6.1 实机日志能证明什么、不能证明什么
+
+`logs/full.log`（54 MB，`01-25 00:16` → `11-09 13:12`）：
+
+| 检索 | 结果 |
+|---|---|
+| `rg -a "QAuxv"` | **0 条**（QAuxiliary 的 `Log.*` 全部 tag=QAuxv，一条都没进 logcat） |
+| `structmsg_version_error` / `getVersionExceptionView` / `当前版本导致消息展示异常` | **0 条** |
+| `StructMsg|structmsg` | **2 条**，都是 MIUI `DragSharePoC` 捕获的功能描述文本（`清掉 StructMsgForGeneralShare 的 mMsgException 标记…`），**不是业务日志** |
+| `com.tencent.mobileqq` | 21149 条，全是 `wm_on_*` / `input_focus` / `am_cpu` 等系统窗口日志 |
+| LSPosed 作用域 `db_scope.txt:457-459` | `app_pkg_name=com.tencent.mobileqq` + `module_pkg_name=io.github.qauxv` → **作用域正常，模块已挂** |
+
+结论：**这份 logcat 不含 QQ 业务日志**（QQ 的 QLog 写文件，不进 logcat），无法用它证明链路走向；但「零条版本异常字样」与「该链路根本没被触发」一致。**不能**拿日志当 hook 生效/失效的证据。
+
+### 6.2 上一轮错在哪（三条假设全部不成立）
+
+**❌ 假设 1：这条消息是 structmsg**
+
+样本 JSON 的顶层结构是 `{"app":"com.tencent.tuwen.lua","view":"news","meta":{"news":{…}},"config":{…}}` —— 这是 **Ark 消息**的标准结构（`app` / `view` / `meta` / `config` / `prompt`），对应 `MessageForArkApp`（classes9.dex）+ `ArkAppItemBubbleBuilder`（classes8.dex）。
+
+structmsg 是 XML（`<msg serviceID="…" templateID="…" action="…">`），字段是 `mMsgServiceID` / `mMsgUrl` / `mItems`，与样本 JSON 完全不同。上一轮把「有 `app`/`view` 字段」误读成 structmsg 的 XML 属性。
+
+旁证：
+- `com.tencent.tuwen.lua` 在全部 23 个 dex 中 **0 命中**（`grep -c -a -F` 逐文件验证）
+- `ArkAppItemBubbleBuilder` 里存在 `forward_ark_app_name` / `forward_ark_app_view` / `forward_ark_app_ver` / `forward_ark_app_compat` 等转发 key，确认 Ark 链路在 8.8.50 是活的
+
+**❌ 假设 2：`mMsgException` 会在这条消息上被置 true**
+
+8.8.50 里 `mMsgException` 的写入点（`dexdump` 全量 grep，共 11 处 `iput-boolean … mMsgException`）：
+
+| 位置 | 方法 | 写入值 | 说明 |
+|---|---|---|---|
+| `dex13.txt:1583222` | `AbsShareMsg.<init>()V` | `v1 = 0` | 构造初始化 false |
+| `dex13.txt:1583295` | `AbsShareMsg.<init>(Bundle)V` | `v3 = 0` | 构造初始化 false |
+| `dex13.txt:1583791` | `AbsShareMsg.<init>(StructMsgNode)V` | `v1 = 0` | **XML 路径的构造函数，也是 false** |
+| `dex13.txt:1940963` | `StructMsgForGeneralShare.readExternal` `0x03b2` | 由 `0x00c8: if-lt v1, v3` 跳入 | 二进制路径 |
+| `dex13.txt:1941014` | `StructMsgForGeneralShare.readExternal` `0x0418` | catch `structmsg_version_error` | 二进制路径 |
+| `dex13.txt:1934910/1934922` | `StructMsgForAudioShare.readExternal` | catch | 二进制路径 |
+| `dex13.txt:1943813/1943825` | `StructMsgForImageShare.readExternal` | catch | 二进制路径 |
+
+关键：**8.8.50 的 `StructMsgFactory.a(QQAppInterface,IJ[BI)` 走的是 `a([BI)`（`getStructMsgFromXmlBuffByStream`，XML + SAX），不经过 `readExternal`**：
+
+```
+cls_StructMsgFactory.txt:82
+200dc8: 7702 d129 1800  |0002: invoke-static/range {v24, v25}, …StructMsgFactory;.a:([BI)L…AbsStructMsg;
+```
+
+`readExternal` 只属于 `StructMsgFactory.a([B)`（`ObjectInputStream.readInt()` 二进制反序列化）那条支路。XML 路径下 `mMsgException` 恒为构造时的 `false`，**hook 改它等于空操作**——这正是「hook 挂上但完全无效且不报错」的原因。
+
+**❌ 假设 3：`getInCompatibleView` 是「暂不支持」的渲染点**
+
+`grep -n getInCompatibleView dex13.txt` 只有两处：字段名表（`1119099`）和定义（`1119107`），**零调用者**，是死代码。
+
+### 6.3 正确方向（Ark 链路，未完全定位）
+
+```
+MessageForArkApp (classes9.dex)
+   → ArkAppItemBubbleBuilder (classes8.dex, 2084 行 smali)
+   → com.tencent.ark.* 容器 (ArkAppView / ArkViewImplement)
+   → 渲染失败 fallback
+```
+
+`ArkAppItemBubbleBuilder` 已确认的方法：
+- `a(ChatMessage,ViewHolder,View,BaseChatItemLayout,OnLongClickAndTouchListener)View` — getView
+- `b(MessageForArkApp)V`（281 insns）— 含两处 `Context.getString`，但查证是**发送状态文案**，不是「暂不支持」
+- `a(Context,MessageForArkApp)V` / `b(Context,MessageForArkApp)V` — 加载/重试
+
+**未验证**：8.8.50 显示「暂不支持该消息类型，请升级至最新版本QQ查看」的确切位置。已知的两个候选资源（`0x7f120d19` / `0x7f1225f8`）在 23 个 dex 中零引用，所以文案大概率仍是**服务端下发**，客户端只做文本气泡展示。
+
+### 6.4 本轮代码修正
+
+`source/app/src/main/java/io/github/qauxv/hook/experimental/ForceShowHighVersionStructMsg.kt`：
+
+1. **字段定位改为确定性**：只按名 `mMsgException` 沿继承链精确取（该字段名在 8.8.50 smali 里是明文，r8 未改名），**删除**「遍历所有 boolean 字段、优先名字含 exception/error、只剩一个就用」的猜测逻辑 —— 该继承链上有 `mHasSource` / `mHasAdSource` / `mMsgException` 等多个 boolean，猜错会静默改错字段。
+2. 保留 `readExternal` after + `getView` before 双 hook（对**二进制 structmsg 路径**仍然正确且无害）。
+3. 明确边界：**该 hook 不覆盖 Ark 消息**，对本例（`com.tencent.tuwen.lua`）无效。
+
+### 6.5 下一步（按性价比排序）
+
+1. **取真机 QLog**：`/sdcard/Android/data/com.tencent.mobileqq/files/QLog/` 或 `Tencent/msflogs/com/tencent/mobileqq/`，搜 `StructMsg` / `ArkApp` / `ark` 关键字，确认这条消息落到哪个类。
+2. **抓 `msgData`**：从 DB 取该消息的 `msgData`，看前 4 字节 msgtype 是 `-5008`（Ark）还是 `-2011`（structmsg），一锤定音。
+3. 若确认 Ark：hook 点应放在 `ArkAppItemBubbleBuilder` 的 getView 入口，或在 `MessageForArkApp` 层把 `ark_app_message.appName` 替换为 8.8.50 已支持的内置 app；最差兜底是把气泡降级为文本显示 `prompt`（`[分享]《卡莉亚的炼金工房》…`），至少内容可见。
+
+---
+
+## 7. Ark 链路（2026-11-09 续）
+
+样本：`{"app":"com.tencent.tuwen.lua","view":"news","ver":"0.0.0.1","prompt":"[分享]《卡莉亚的炼金工房》…","meta":{"news":{"app_type":1,"appid":1105910806,"title":"…","desc":"…","preview":"…","tag":"小黑盒","jumpUrl":"https://api.xiaoheihe.cn/…"}},"config":{"type":"normal","forward":1}}`
+
+类位置：`MessageForArkApp` → classes9.dex；`ArkAppItemBubbleBuilder` / `ArkAioContainerWrapper` / `ArkAppContainer` → classes8.dex（反汇编见 `analysis/dex8.txt`、`analysis/cls_ArkAppItemBubbleBuilder.txt`）。
+
+### 7.1 问题 1：`ArkAppItemBubbleBuilder` 拿到这条消息后走哪条分支
+
+**结论：走正常 `ArkAppView` 渲染，Java 层没有任何「暂不支持」的判定分支。**
+
+`ArkAppItemBubbleBuilder.a(ChatMessage,ViewHolder,View,BaseChatItemLayout,OnLongClickAndTouchListener)View`（`cls_ArkAppItemBubbleBuilder.txt:1059`，dex 偏移 `188f6c`）的执行序列：
+
+```
+188fa8 |0016: iget-object v5, v6, MessageForArkApp;.ark_app_message:Lcom/tencent/mobileqq/data/ArkAppMessage;
+188fb0 |001a: invoke-virtual {v4, v5}, ArkAppMessage$Config;.fromString:(Ljava/lang/String;)Z   ← 解析 config
+188fcc |0028: const v10, #7f0e01f4                                                             ← inflate layout
+188fe2 |0033: findViewById → check-cast ArkAppView      → Holder.c
+188ff8 |003e: findViewById → check-cast LinearLayout    → Holder.d
+18900e |0049: findViewById → check-cast ImageView       → Holder.e
+189024 |0054: findViewById → check-cast TextView        → Holder.f
+189044 |0064: findViewById → check-cast ArkAppLoadLayout → Holder.b
+1890d0 |00aa: ArkTipsManager.b() / b(J)Z                                                      ← 提示管理
+189104 |00c4: new-instance ArkAioContainerWrapper
+18911a |00cf: invoke-virtual {v9, v10}, ArkAioContainerWrapper;.a:(L…SessionInfo;)V
+18917a |00ff: iget appName
+18917e |0101: iget appView
+189186 |0105: iget appMinVersion
+18918e |0109: iget metaList
+1891b2 |011b: invoke-virtual/range {v9,v10,v11,v12,v13,v14,v15,v16},
+              ArkAioContainerWrapper;.a:(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;
+                                        ;Ljava/lang/String;FL…MessageForArkApp;L…SessionInfo;)Z
+1891b8 |011e: new-instance ArkAppItemBubbleBuilder$1      ← 注意：无 move-result，返回值被丢弃
+1891c6 |0125: ArkAppView;.setLoadCallback:(Lcom/tencent/ark/ArkViewImplement$LoadCallback;)V
+1891fe |0141: MessageForArkApp;.isRectangleBorder / setBorderType / setAlignLeft / setOnTouchListener
+1892fe |01c1: return-object v9
+```
+
+**关键点**：`0x011b` 调用的 `ArkAioContainerWrapper.a(...)` 返回 `Z`，但下一条直接 `new-instance`，**没有 `move-result`** —— 初始化失败的结果被彻底丢弃，`getView` 照样返回那个 `ArkAppView` 容器（内容为空）。
+
+真正判定在 `ArkAioContainerWrapper.a(...)`（`dex8.txt:1800177`，偏移 `186d50`）：
+
+```
+186d90 |0018: invoke-super/range {…}, ArkAppContainer;.a:(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;
+                                          ;Ljava/lang/String;FL…SessionInfo;)Z
+186d96 |001b: move-result v9
+186d9a |001d: if-nez v9, 0038                       ← super.init 返回 false
+186db4 |002a: const-string/jumbo v11, "super.init return false!!! wrapper: %h."
+186dc2 |0031: const-string/jumbo v11, "ArkApp.ArkAioContainerWrapper"
+186dce |0037: return v0                            ← 返回 false，只打一条 QLog
+186dee |0047: return v10                           ← 成功返回 true
+```
+
+→ **app 初始化失败时，Java 层唯一的反应是 `QLog.d("ArkApp.ArkAioContainerWrapper", 4, "super.init return false!!! wrapper: %h.")`，不抛异常、不改 View、不显示任何提示。** 后续「暂不支持」的显示发生在 native `libark` 容器内部（`ArkAppView` 的 loadCallback 里），Java 侧拿不到分支。
+
+**这条 QLog 就是排查用的锚点**：真机 QLog 里若出现 `super.init return false`，即确认是 Ark app 包初始化失败（app 不在本地 / 版本不满足）。
+
+### 7.2 问题 2：`app` 名如何决定能否渲染，`com.tencent.tuwen.lua` 本地有没有
+
+**结论：8.8.50 不内置该 app 的任何配置，完全依赖 `ArkAppMgr` 运行时下发/下载。**
+
+- `tar -tf apks/QQ_8.8.50.apk | grep -i ark` 共 83 条，**全部是误匹配**（`benchmark/*.json`、`*.geojson`、`*_dark_icon.png`、`mapcfg_park.png`）。真实的 ark 资源只有两个 layout：`r/g/ark.xml`、`r/i/ark.xml`，以及 `r/k/ark_app_manager_panel_icon.png`。**assets 里没有任何 ark app 配置 json**。
+- `com.tencent.tuwen.lua` 在全部 23 个 dex 中 **0 命中**（逐文件 `grep -c -a -F`）。
+- `ArkAppItemBubbleBuilder` 里只有三个硬编码特例：`com.tencent.troopapp`、`com.tencent.test.troopapp`、`com.tencent.giftmall.giftark`（`cls_ArkAppItemBubbleBuilder.txt` 字符串表），没有 `tuwen.lua`。
+
+`ArkAppMessage`（classes9.dex，22 个实例字段，用自写 dex 解析器 `analysis/fld.py` 导出）：
+
+```
+appDesc, appId, appMinVersion, appName, appView, compatibleText, config,
+containStructMsg, forwardID, from, isShow, mAppList, mExtra, mSourceActionData,
+mSourceAd, mSourceName, mSourceUrl, mSource_A_ActionData, mText, metaList,
+promptText, uniSeq
+```
+
+→ `appName` / `appView` / `appMinVersion` / `metaList` 全部原样传给 `ArkAioContainerWrapper.a(...)`，由 Ark 容器去本地缓存目录（`ArkAppMgr.getAppPathFromLocal`）找 app 包；找不到就 `super.init` 返回 false。
+
+### 7.3 问题 3：降级路径的文本从哪来，能不能塞 jumpUrl
+
+**结论：气泡文本用的是 `MessageForArkApp.msg`（消息摘要），不是 `promptText` 现场拼接；`promptText` / `compatibleText` 是另外两个字段。**
+
+`getView` 里的绑定（`cls_ArkAppItemBubbleBuilder.txt:1201-1202`）：
+
+```
+1891d2 |012b: iget-object v3, v6, MessageForArkApp;.msg:Ljava/lang/String;        ← 消息摘要
+1891d6 |012d: iput-object v3, v5, ArkAppItemBubbleBuilder$Holder;.a:Ljava/lang/String;
+```
+
+`ArkAppMessage` 里另有：
+- `promptText`（field@93b9）—— 分享提示 `[分享]《卡莉亚的炼金工房》…`，被 `dex8.txt:1560481 (18a3e8)`、`1561741 (1897e2)`、`1561756 (189824)` 读取
+- `compatibleText`（field@93ae）—— 不兼容提示，被 `dex8.txt:1560493 (18a424)` 读取
+
+**可以塞 jumpUrl**：`metaList` 是 `{"news":{"jumpUrl":"https://api.xiaoheihe.cn/…"}}` 形式的 JSON 字符串，Java 层可直接解析第一个 view 对象的 `jumpUrl`；兜底还有 `mSourceUrl` 字段。点击用标准 `Intent.ACTION_VIEW` 即可，无需 Ark 容器参与。
+
+### 7.4 问题 4：`meta.news` 这种旧格式 8.8.50 是否还认
+
+**结论：Java 层不解析 `view` 类型，`news` 是否被支持由 native libark 决定，Java 侧无法判定（未验证）。**
+
+证据：`getView` 只做 `iget appView` / `iget metaList` 然后整串透传：
+
+```
+18917e |0101: iget-object v11, v11, ArkAppMessage;.appView:Ljava/lang/String;
+18918e |0109: iget-object v14, v14, ArkAppMessage;.metaList:Ljava/lang/String;
+1891b2 |011b: invoke-virtual/range {…}, ArkAioContainerWrapper;.a:(appName, appView, appMinVersion, metaList, density, msg, session)Z
+```
+
+Java 侧没有 `ArkAppXmlParser`、没有 view 白名单、没有 `"news"` 字面量（`cls_ArkAppItemBubbleBuilder.txt` 字符串表里没有 `news`）。`view:"news"` + `meta.news` 的解析全部在 `libark` 的 C++ 侧。
+
+→ 8.8.50 是否认 `news` 这个旧图文格式，**只能靠真机验证**（看 Ark 容器是否渲染出内容），静态分析到 Java 层为止。
+
+### 7.5 方案选择
+
+| 方案 | 可行性 | 理由 |
+|---|---|---|
+| **A：未知 app 走通用图文卡片** | ❌ 不可行 | Java 层没有「未知 app → 通用卡片」的兜底分支；渲染完全在 native `libark`，`ArkAppContainer.a(...)` 返回 false 后 Java 侧不做任何补救（返回值被 `getView` 丢弃）。要改只能 patch native，超出模块能力 |
+| **B：降级为可点击文本** | ✅ 已实现 | `ArkAppItemBubbleBuilder.getView` 是 Java 方法，`hookBefore` 设 `param.result` 即可跳过整个 Ark 渲染，用 `promptText`/`mText`/`compatibleText` + `metaList.jumpUrl` 拼 TextView |
+
+**选定方案 B**，代码：`source/app/src/main/java/io/github/qauxv/hook/experimental/ArkFallbackToText.kt`
+
+实现要点：
+1. hook `ArkAppItemBubbleBuilder` 里「5 个参数 + 返回 View」的方法（`getView` 被混淆成 `a`，用签名特征定位，不硬编码方法名）。
+2. `hookBefore` 里从 `param.args[0]`（`MessageForArkApp`）取 `ark_app_message`，再读 `promptText` → `mText` → `compatibleText` 依次兜底。
+3. `param.args[3]`（`BaseChatItemLayout`，是 ViewGroup）取 `Context`，构造 `TextView` 并 `param.result = textView` —— 原方法不再执行，Ark 容器不初始化，避免 native 侧空渲染。
+4. 链接：`metaList` 解析第一个 view 对象的 `jumpUrl`，兜底 `mSourceUrl`；点击 `Intent.ACTION_VIEW` 打开。
+5. 字段全部按名反射读取（`ark_app_message` / `promptText` / `mText` / `compatibleText` / `metaList` / `mSourceUrl`），不猜类型。
+
+**代价**：开启后**所有** Ark 消息都变文本气泡（不只是这条），所以默认关闭、描述里写明。若要只对 `com.tencent.tuwen.lua` 生效，在 `replaceWithText` 里加一行 `if (appName != "com.tencent.tuwen.lua") return` 即可。
+
+### 7.6 未验证项
+
+1. 8.8.50 的 native `libark` 是否支持 `view:"news"` + `meta.news`（需真机 QLog 里看 `super.init return false` 是否出现）。
+2. 该消息的 `msgtype` 是否真是 `-5008`（Ark）—— 需从 DB 取 `msgData` 前 4 字节确认。
+3. `ArkTipsManager`（`getView` 的 `0x00aa` 处调用）是否参与「暂不支持」提示 —— 未展开。

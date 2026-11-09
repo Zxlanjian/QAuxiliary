@@ -83,7 +83,7 @@ public class InjectDelayableHooks {
         IDynamicHook[] hooks = HookInstaller.queryAllAnnotatedHooks();
         for (IDynamicHook h : hooks) {
             try {
-                if (h.isEnabled() && h.isPreparationRequired()) {
+                if (HookInstaller.isHookApplicable(h) && h.isEnabled() && h.isPreparationRequired()) {
                     needDeobf = true;
                     break;
                 }
@@ -105,7 +105,7 @@ public class InjectDelayableHooks {
                 final HashSet<Step> todos = new HashSet<>();
                 for (IDynamicHook h : hooks) {
                     try {
-                        if (!h.isEnabled()) {
+                        if (!HookInstaller.isHookApplicable(h) || !h.isEnabled()) {
                             continue;
                         }
                         if (h.isPreparationRequired()) {
@@ -211,7 +211,7 @@ public class InjectDelayableHooks {
             if (LicenseStatus.hasUserAcceptEula()) {
                 for (IDynamicHook h : hooks) {
                     try {
-                        if (h.isEnabled() && h.isTargetProcess()) {
+                        if (HookInstaller.isHookApplicable(h) && h.isEnabled() && h.isTargetProcess()) {
                             if (!h.isPreparationRequired()) {
                                 h.initialize();
                             } else {
@@ -244,7 +244,7 @@ public class InjectDelayableHooks {
             IDynamicHook[] hooks = HookInstaller.queryAllAnnotatedHooks();
             for (IDynamicHook h : hooks) {
                 try {
-                    if (h.isEnabled() && h.isTargetProcess()) {
+                    if (HookInstaller.isHookApplicable(h) && h.isEnabled() && h.isTargetProcess()) {
                         if (!h.isPreparationRequired()) {
                             h.initialize();
                         } else {
@@ -263,7 +263,7 @@ public class InjectDelayableHooks {
     public static void doInitDelayableHooksMP() {
         for (IDynamicHook h : HookInstaller.queryAllAnnotatedHooks()) {
             try {
-                if (h.isEnabled() && h.isTargetProcess() && !h.isPreparationRequired()) {
+                if (HookInstaller.isHookApplicable(h) && h.isEnabled() && h.isTargetProcess() && !h.isPreparationRequired()) {
                     SyncUtils.requestInitHook(HookInstaller.getHookIndex(h), h.getTargetProcesses());
                     h.initialize();
                 }

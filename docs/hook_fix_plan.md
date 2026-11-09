@@ -396,3 +396,145 @@ git -C D:/DSH-Builds/QAuxiliaryFix/source checkout -- \
 ```
 
 风险：三处只放宽可用性判断，`initOnce` 一行未改。`ChangeFriendsVip` / `ShowServiceRemove` 的目标方法是 8.8.50 实存的方法，属低风险；`ForceEnableMultiForward` 依赖 `initEntryHeaderView` 后按 `friendLayout`/`contactLayout`/`troopDiscussionLayout`/`multiChatLayout` 四个 slot 名取 View，8.8.50 的布局字段名需实机确认（取不到会抛 NPE 被 `hookAfterIfEnabled` 捕获，不影响启动）。
+
+---
+
+# §10 第三轮：4 个 `NoSuchElementException` 修复（含编译验证）
+
+## 10.1 根因定论：Kotlin `::class.java` vs 原始类型
+
+`NoSuchElementException: Array contains no element matching the predicate` 来自 `me/hd/util/HookUtil.kt:62-66`：
+```kotlin
+internal fun Class<*>.singleMethod(condition: Method.() -> Boolean) = declaredMethods.single { it.condition() }.apply { isAccessible = true }
+```
+`single {}` 无匹配即抛。而 4 个 hook 里 3 个的匹配条件把 **包装类** 和 **原始类型** 比较，恒为 false：
+
+| 写法 | 实际值 | 反射里 Z / I / V 的类型 | 结果 |
+| --- | --- | --- | --- |
+| `Void::class.java` | `java.lang.Void.class` | `void.class`（`Void.TYPE`） | 恒不等 |
+| `Boolean::class.java` | `java.lang.Boolean.class` | `boolean.class`（`Boolean.TYPE`） | 恒不等 |
+| `Int::class.java` | `java.lang.Integer.class` | `int.class`（`Integer.TYPE`） | 恒不等 |
+
+**这三个不是 QQ 改签名，是代码从来没匹配上过。**（引用类型如 `ViewGroup::class.java` / `List::class.java` 的 `::class.java` 是正确的，与反射结果一致，不受影响。）
+
+## 10.2 逐处修复
+
+### (1) `ReplyNoAtHook`（用户点名的「去除@」）
+
+文件：`source/app/src/main/java/cc/ioctl/hook/ui/chat/ReplyNoAtHook.kt:90-117`（非 NT 分支，`requireMinQQVersion(QQ_6_8_6)` 之后）
+
+改前：
+```kotlin
+val method = clazz.declaredMethods.single { method ->
+    val isStatic = Modifier.isStatic(method.modifiers)
+    val isReturnVoid = method.returnType == Void::class.java
+    val params = method.parameterTypes
+    val isParamsTrue = params.size >= 3 && params[1] == Initiator._BaseSessionInfo() && params[2] == Boolean::class.java
+    isStatic && isReturnVoid && isParamsTrue
+}
+hookBeforeIfEnabled(method) { param ->
+    val p0 = param.args[2] as Boolean
+    if (!p0) { param.result = null }
+}
+```
+
+改后：
+```kotlin
+val baseSessionInfo = Initiator._BaseSessionInfo()
+val candidates = clazz.declaredMethods.filter { method ->
+    method.returnType == Void.TYPE &&
+        method.parameterTypes.size >= 3 &&
+        method.parameterTypes[1] == baseSessionInfo &&
+        (method.parameterTypes[2] == java.lang.Boolean.TYPE ||
+            method.parameterTypes[2] == java.lang.Boolean::class.java)
+}
+val method = candidates.firstOrNull { Modifier.isStatic(it.modifiers) } ?: candidates.firstOrNull()
+if (method == null) {
+    Log.e("ReplyNoAtHook: 8.8.50 找不到匹配方法, class=$className, declaredMethods=${clazz.declaredMethods.size}")
+    return false
+}
+method.isAccessible = true
+val atIndex = method.parameterTypes.indexOfFirst {
+    it == java.lang.Boolean.TYPE || it == java.lang.Boolean::class.java
+}
+Log.d("ReplyNoAtHook: hooked ${method.declaringClass.name}#${method.name} atIndex=$atIndex")
+hookBeforeIfEnabled(method) { param ->
+    if (atIndex >= 0 && !(param.args[atIndex] as Boolean)) { param.result = null }
+}
+```
+
+- **命中的 8.8.50 签名**（`analysis/methods_8.8.50.txt`）：
+  `Lcom/tencent/mobileqq/activity/aio/rebuild/input/InputUIUtils;->a(Lcom/tencent/mobileqq/activity/aio/core/AIOContext;Lcom/tencent/mobileqq/activity/aio/BaseSessionInfo;Z)V`
+  （`QQConfigTable.kt:80` 给 `QQ_8_6_0` 档的默认类名正是 `com/tencent/mobileqq/activity/aio/rebuild/input/InputUIUtils`，8.8.50=2324 落在 `QQ_8_6_0` 与 `QQ_8_9_0` 之间，命中该档。）
+- 为什么原条件不成立：`isReturnVoid` 与 `isParamsTrue` 两个比较都用包装类，恒 false → `single{}` 抛异常。
+- 附带加固：`isStatic` 不再作为硬条件（先 static 优先，找不到退回非 static），`param.args[2]` 改为按签名动态求 `atIndex`，避免未来签名移位写死下标。
+
+### (2) `HideEditTroopNick`
+
+文件：`source/app/src/main/java/me/hd/hook/simplify/chat/goup/other/HideEditTroopNick.kt:50-67`
+
+改前：`singleMethod { name("c") && parameters(ViewGroup::class.java, EditText::class.java, ViewGroup::class.java) }`
+
+改后：去掉 `name("c")`，只按参数类型匹配，`firstOrNull` + `Log.e` + `return false`。
+
+- **命中的 8.8.50 签名**：`Lcom/tencent/mobileqq/activity/editservice/EditTroopMemberNickService;->a(Landroid/view/ViewGroup;Landroid/widget/EditText;Landroid/view/ViewGroup;)V`
+- 为什么原条件不成立：8.8.50 里该方法名为 `a` 而非 `c`（同类只有 `c()`、`c(I)`、`c(自身)` 等，签名全不符）。参数类型是引用类型，`::class.java` 写法本身没错。
+
+### (3) `ChangeCircleJumpProfile`
+
+文件：`source/app/src/main/java/me/hd/hook/auxiliary/misc/ChangeCircleJumpProfile.kt:51-73`
+
+改前：`singleMethod { returnType(Boolean::class.java) && name("canJumpToQQProfile") && parameters(List::class.java) }`（第二个方法同理）
+
+改后：`returnType` 改 `Boolean.TYPE || Boolean::class.java`，去掉 `name(...)`，`firstOrNull` + 名字优先/顺序兜底 + `Log.e` + `return false`。
+
+- **命中的 8.8.50 签名**（4 个候选，全部 `(List)Z`）：
+  ```
+  Lcom/tencent/biz/qqcircle/QCirclePluginUtil;->a(Ljava/util/List;)Z
+  Lcom/tencent/biz/qqcircle/QCirclePluginUtil;->b(Ljava/util/List;)Z
+  Lcom/tencent/biz/qqcircle/QCirclePluginUtil;->c(Ljava/util/List;)Z
+  Lcom/tencent/biz/qqcircle/QCirclePluginUtil;->d(Ljava/util/List;)Z
+  ```
+- 为什么原条件不成立：`returnType(Boolean::class.java)` 包装类恒不等（主因），且 8.8.50 里两个方法名已被混淆为 `a/b/c/d`（次因）。
+- **风险标注（推测）**：4 个候选里哪两个对应 `canJumpToQQProfile` / `isJumpToQQProfileBeated` 无法离线确定，代码按「名字优先，否则取候选前两个」处理，并在 `Log.d` 打印全部候选名。需实机验证跳转方向是否正确；若反了，把 `getOrNull(0)/getOrNull(1)` 互换。
+
+### (4) `RemoveDialogWaitTime`
+
+文件：`source/app/src/main/java/me/hd/hook/simplify/ui/misc/RemoveDialogWaitTime.kt:49-70`
+
+改前：`singleMethod { name("createCountdownDialog") && parameters(null ×6, Int::class.java, null ×3) }`
+
+改后：`firstOrNull { p.size == 10 && (p[6] == Integer.TYPE || p[6] == Int::class.java) }`，找不到则 `Log.e` 打印近似候选并 `return false`。
+
+- **命中结果**：`DialogUtil` 在 8.8.50 共 51 个方法，**没有**「10 个参数且第 7 位为 int」的方法，因此该 hook 现在会走「返回 false + 日志」而不是抛异常。
+- 为什么原条件不成立：`Int::class.java` 包装类恒不等（主因）；`createCountdownDialog` 方法名在 8.8.50 已不存在（次因，`DialogUtil` 里已无 countdown 相关方法）。
+- 现状：**功能未恢复**，只消除了异常。要真正修需先确认 8.8.50 的倒计时弹窗入口（候选族 `a(Context;ILjava/lang/String;IILandroid/view/View$OnClickListener;Landroid/view/View$OnClickListener;ZZ)Landroid/app/Dialog;` 有 9 参数版本），需实机断点确认哪个是「继续按钮倒计时」。
+
+## 10.3 编译验证
+
+```
+pwsh -NoProfile -File D:\\DSH-Builds\\QAuxiliaryFix\\tools\\build.ps1 -Task ":app:compileDebugKotlin"
+→ BUILD SUCCESSFUL in 1m 16s (101 actionable tasks: 4 executed, 97 up-to-date)
+```
+只有既有 warning（`TranslateTextMsg.kt`、`MiniAppDirectJump.kt` 等历史问题），本轮 4 个文件无新增 error/warning。
+
+## 10.4 本轮改动清单与回滚
+
+```
+ M app/src/main/java/cc/ioctl/hook/ui/chat/ReplyNoAtHook.kt
+ M app/src/main/java/me/hd/hook/simplify/chat/goup/other/HideEditTroopNick.kt
+ M app/src/main/java/me/hd/hook/auxiliary/misc/ChangeCircleJumpProfile.kt
+ M app/src/main/java/me/hd/hook/simplify/ui/misc/RemoveDialogWaitTime.kt
+```
+
+```bash
+git -C D:/DSH-Builds/QAuxiliaryFix/source checkout -- \
+  app/src/main/java/cc/ioctl/hook/ui/chat/ReplyNoAtHook.kt \
+  app/src/main/java/me/hd/hook/simplify/chat/goup/other/HideEditTroopNick.kt \
+  app/src/main/java/me/hd/hook/auxiliary/misc/ChangeCircleJumpProfile.kt \
+  app/src/main/java/me/hd/hook/simplify/ui/misc/RemoveDialogWaitTime.kt
+```
+
+## 10.5 同类错误排查（全仓）
+
+`rg -n "returnType\((Boolean|Int|Long|Void|Float|Double)::class\.java\)|parameters\([^)]*(Boolean|Int|Long|Void)::class\.java"` 命中的其他 hook 属同一类低级错误（包装类 vs 原始类型），本机其余文件未见新增命中；`me/hd/util/HookUtil.kt` 的 `returnType(...)` / `parameters(...)` 扩展本身接受 `Class<*>`，不做 primitive 归一化，是这类错误的放大器 —— 建议后续在扩展内部统一 `Class::class.javaPrimitiveType ?: Class::class.java` 归一化（本轮未改，避免影响全部调用方）。

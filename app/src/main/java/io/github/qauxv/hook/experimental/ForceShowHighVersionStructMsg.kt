@@ -64,7 +64,9 @@ object ForceShowHighVersionStructMsg :
     override val name = "强制显示高版本分享卡片"
 
     override val description = "清掉 StructMsgForGeneralShare 的 mMsgException 标记，" +
-        "让 messageVersion 不匹配的结构化消息走正常渲染，而不是只显示「请升级QQ」的灰字气泡。" +
+        "让 messageVersion 不匹配的二进制结构化消息走正常渲染，而不是只显示「请升级QQ」的灰字气泡。" +
+        "注意：只对二进制 structmsg（msgType -2011）生效；app/view/meta 这种 Ark 消息（msgType -5008）" +
+        "的渲染在 native libark 里，本开关无效，请用「Ark 卡片降级为文本」。" +
         "服务端按更高版本布局下发的字段可能残缺，极端情况下会显示不完整的卡片。"
 
     override val uiItemLocation = FunctionEntryRouter.Locations.Auxiliary.EXPERIMENTAL_CATEGORY
@@ -88,33 +90,17 @@ object ForceShowHighVersionStructMsg :
     }
 
     /**
-     * 定位 mMsgException（该字段实际声明在父类 AbsShareMsg，必须沿继承链找）：
-     * 1) 按名精确取；
-     * 2) 失败则收集继承链上所有 boolean 字段，优先名字含 exception / error 的；
-     * 3) 仍失败且只有一个 boolean 字段时用它；
-     * 4) 全失败返回 null，由调用方记录错误，本函数不抛。
+     * 确定性定位 mMsgException。
+     *
+     * 该字段由 javac/kotlinc 的源码名保留，8.8.50 的 smali 里是明文
+     * （`iput-boolean v0, v10, Lcom/tencent/mobileqq/structmsg/StructMsgForGeneralShare;.mMsgException:Z`），
+     * 没有被 r8 改名，因此只按名精确取，**不做「唯一 boolean 字段」猜测** ——
+     * 该继承链上有多个 boolean（mHasSource / mHasAdSource / mMsgException …），猜错会静默改错字段。
+     *
+     * 字段真实声明在父类 AbsShareMsg，必须沿继承链向上找。
+     * 找不到返回 null，由调用方终止初始化。
      */
-    private fun locateExceptionField(clazz: Class<*>): Field? {
-        findField(clazz, FIELD_EXCEPTION)?.let { return it }
-
-        val booleanType = Boolean::class.javaPrimitiveType
-        val candidates = ArrayList<Field>()
-        var c: Class<*>? = clazz
-        while (c != null && c != Any::class.java) {
-            for (f in c.declaredFields) {
-                if (f.type == booleanType) {
-                    candidates.add(f)
-                }
-            }
-            c = c.superclass
-        }
-        candidates.firstOrNull { it.name.contains("exception", ignoreCase = true) }?.let { return it }
-        candidates.firstOrNull { it.name.contains("error", ignoreCase = true) }?.let { return it }
-        if (candidates.size == 1) {
-            return candidates[0]
-        }
-        return null
-    }
+    private fun locateExceptionField(clazz: Class<*>): Field? = findField(clazz, FIELD_EXCEPTION)
 
     /** 沿继承链找 readExternal(Ljava/io/ObjectInput;)V。 */
     private fun findReadExternal(start: Class<*>): Method? {

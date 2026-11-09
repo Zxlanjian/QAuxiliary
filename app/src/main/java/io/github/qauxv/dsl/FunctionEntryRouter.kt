@@ -22,6 +22,7 @@
 
 package io.github.qauxv.dsl
 
+import io.github.qauxv.base.IDynamicHook
 import io.github.qauxv.base.IUiItemAgentProvider
 import io.github.qauxv.dsl.func.FragmentDescription
 import io.github.qauxv.dsl.func.IDslItemNode
@@ -151,6 +152,20 @@ object FunctionEntryRouter {
         val lostAndFoundItems = mutableListOf<IUiItemAgentProvider>()
         val annotatedUiItemAgentEntries = queryAnnotatedUiItemAgentEntries()
         for (uiItemAgentEntry in annotatedUiItemAgentEntries) {
+            // 只展示当前宿主版本上真正可用的功能。
+            // isAvailable 为 false 的 hook 有两种来源：版本门不满足（例如面向 QQ 9.x 的功能跑在
+            // 8.8.50 上），或它依赖的类在本版本根本不存在。这类功能即便配置里残留 isEnabled=true
+            // 也无法工作，留在设置里只会让用户以为「已开启但不生效」。
+            if (uiItemAgentEntry is IDynamicHook) {
+                val available = try {
+                    uiItemAgentEntry.isAvailable
+                } catch (t: Throwable) {
+                    true // 探测本身出错时按可用处理，交给运行期错误面板记录
+                }
+                if (!available) {
+                    continue
+                }
+            }
             var location = uiItemAgentEntry.uiItemLocation
             location = resolveUiItemAnycastLocation(location) ?: location
             // find the parent node

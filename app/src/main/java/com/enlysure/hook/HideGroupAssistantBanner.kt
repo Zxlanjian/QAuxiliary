@@ -29,12 +29,17 @@ import io.github.qauxv.base.annotation.UiItemAgentEntry
 import io.github.qauxv.dsl.FunctionEntryRouter
 import io.github.qauxv.hook.CommonSwitchFunctionHook
 import io.github.qauxv.util.Initiator
+import io.github.qauxv.util.classExists
 
 @FunctionHookEntry
 @UiItemAgentEntry
 object HideGroupAssistantBanner : CommonSwitchFunctionHook() {
 
     override val name = "隐藏群助手顶部Banner提示"
+
+    // 目标类在 NT 化之前的客户端（如 QQ 8.8.50）中整包不存在，
+    // 不加这道门的话配置里残留的 isEnabled=true 会让它每次启动都抛 ClassNotFoundException。
+    override val isAvailable = classExists("com.tencent.mobileqq.activity.home.chats.troophelper.TroopHelperFragment")
 
     override val description = "隐藏群助手顶部 '以下为\"收进群助手且不提醒\"的群消息：' 的提示"
 

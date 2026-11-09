@@ -12,12 +12,17 @@ import io.github.qauxv.util.QQVersion
 import io.github.qauxv.util.requireMinQQVersion
 import io.github.qauxv.util.xpcompat.XC_MethodHook
 import io.github.qauxv.util.xpcompat.XposedBridge
+import io.github.qauxv.util.classExists
 
 @FunctionHookEntry
 @UiItemAgentEntry
 object BlockLinkInfo : CommonSwitchFunctionHook() {
 
     override val name = "屏蔽链接信息"
+
+    // 目标类在 NT 化之前的客户端（如 QQ 8.8.50）中整包不存在，
+    // 不加这道门的话配置里残留的 isEnabled=true 会让它每次启动都抛 ClassNotFoundException。
+    override val isAvailable = classExists("com.tencent.qqnt.kernel.nativeinterface.LinkInfo")
 
     override val description = "去除链接下方的信息卡片，也可以用来防耗流量链接消息"
 

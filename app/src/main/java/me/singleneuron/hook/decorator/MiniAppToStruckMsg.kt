@@ -64,7 +64,16 @@ object MiniAppToStruckMsg : BaseSwitchFunctionDecorator(), IItemBuilderFactoryHo
             if (jsonObj.optString("app").contains("com.tencent.miniapp", true)) {
                 val miniAppArkData = json.decodeToDataClass<MiniAppArkData>()
                 val structMsgJson = StructMsgData.fromMiniApp(miniAppArkData).toString()
-                arkAppMsg.invoke("fromAppXml", structMsgJson)
+                // Reflex.invokeVirtual 的参数布局是「参数值…, 参数类型…, 返回类型」。
+                // 这里只传一个值会让 argc = 1/2 = 0，随后把 structMsgJson 当成 Class 强转，
+                // 抛 ClassCastException: String cannot be cast to Class（实机日志 errors: 21 全是它）。
+                // ArkAppMessage.fromAppXml(Ljava/lang/String;)Z 返回 boolean。
+                arkAppMsg.invoke(
+                    "fromAppXml",
+                    structMsgJson,
+                    String::class.java,
+                    Boolean::class.javaPrimitiveType!!,
+                )
                 true
             } else false
         } else false

@@ -49,6 +49,19 @@ object QrLoginAuthSecCheckMitigation : CommonSwitchFunctionHook() {
 
     override val uiItemLocation: Array<String> = FunctionEntryRouter.Locations.Auxiliary.EXPERIMENTAL_CATEGORY
 
+    /**
+     * 该功能依赖宿主资源 id `confirm_risk_login_btn`（扫码风险登录的确认按钮）。
+     * 旧客户端（如 QQ 8.8.50）里没有这个 id，initOnce 会在 `getDeclaredField` 处抛
+     * NoSuchFieldException，所以直接把「字段是否存在」作为可用性判据。
+     */
+    override val isAvailable: Boolean = try {
+        Initiator.loadClass(hostInfo.packageName + ".R\$id")
+            .getDeclaredField("confirm_risk_login_btn")
+        true
+    } catch (t: Throwable) {
+        false
+    }
+
     override fun initOnce(): Boolean {
         if (QAppUtils.isQQnt()) {
             //com.tencent.biz.qrcode.activity.QRLoginAuthActivity$h

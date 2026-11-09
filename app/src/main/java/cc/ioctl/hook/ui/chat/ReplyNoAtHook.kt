@@ -88,16 +88,30 @@ object ReplyNoAtHook : CommonSwitchFunctionHook(), DexKitFinder {
         } else if (requireMinQQVersion(QQVersion.QQ_8_6_0)) {
             val className = ConfigTable.getConfig<String?>(ReplyNoAtHook::class.java.getSimpleName()) ?: return false
             val clazz = Initiator.loadClass(className)
-            val method = clazz.declaredMethods.single { method ->
-                val isStatic = Modifier.isStatic(method.modifiers)
-                val isReturnVoid = method.returnType == Void::class.java
-                val params = method.parameterTypes
-                val isParamsTrue = params.size >= 3 && params[1] == Initiator._BaseSessionInfo() && params[2] == Boolean::class.java
-                isStatic && isReturnVoid && isParamsTrue
+            val baseSessionInfo = Initiator._BaseSessionInfo()
+            // QQ 8.8.50: 原条件用 Void::class.java / Boolean::class.java 与反射返回的
+            // void.class / boolean.class 比较，恒为 false（Void::class.java 是 java.lang.Void.class），
+            // 这段代码从来没匹配上过。改用 Void.TYPE / Boolean.TYPE 比较原始类型。
+            val candidates = clazz.declaredMethods.filter { method ->
+                method.returnType == Void.TYPE &&
+                    method.parameterTypes.size >= 3 &&
+                    method.parameterTypes[1] == baseSessionInfo &&
+                    (method.parameterTypes[2] == java.lang.Boolean.TYPE ||
+                        method.parameterTypes[2] == java.lang.Boolean::class.java)
             }
+            val method = candidates.firstOrNull { Modifier.isStatic(it.modifiers) } ?: candidates.firstOrNull()
+            if (method == null) {
+                Log.e("ReplyNoAtHook: 8.8.50 找不到匹配方法, class=$className, declaredMethods=${clazz.declaredMethods.size}")
+                return false
+            }
+            method.isAccessible = true
+            // 不写死参数下标：按实际签名里第一个 boolean 参数定位「是否 @」
+            val atIndex = method.parameterTypes.indexOfFirst {
+                it == java.lang.Boolean.TYPE || it == java.lang.Boolean::class.java
+            }
+            Log.d("ReplyNoAtHook: hooked ${method.declaringClass.name}#${method.name} atIndex=$atIndex")
             hookBeforeIfEnabled(method) { param ->
-                val p0 = param.args[2] as Boolean
-                if (!p0) {
+                if (atIndex >= 0 && !(param.args[atIndex] as Boolean)) {
                     param.result = null
                 }
             }

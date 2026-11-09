@@ -156,3 +156,116 @@ protected void onMeasure(int i, int i2) {
 | 2 个新实验性 hook | ✅ 已加，编译通过；hook 目标签名均在 8.8.50 方法表中确认 |
 | 实机验证 | ❌ 无 8.8.50 设备，全部结论基于静态证据 |
 | 完整 APK | ⏳ 依赖 NDK 29 / CMake 3.31 |
+
+---
+
+## 七、第二轮：基于实机 LSPosed 日志的修正（2026-11-09 晚）
+
+设备：QQ 8.8.50(2324)，QAuxiliary 1.6.1.r3054.4791fc9，LSPosed 作用域正常。
+日志：`LSPosed_20261109_131224.zip`（`full.log` 330,491 行 + 82 份带运行时状态的 hook 清单）。
+
+### 7.1 「除去不支持该版本的功能」
+
+第一轮只做了分析，没有让 `isAvailable` 真正生效。实机清单显示：59 个 hook 的
+`isAvailable: false` 但 `isEnabled: true`，每次启动照样执行 `initOnce` 并抛异常。
+根因两处：
+
+- `BaseFunctionHook.isEnabled` 里 `isAvailable` 只作为**默认值**参与（`mDefaultEnabled && isAvailable`），
+  一旦配置写过 `true` 就再也不看它；
+- `InjectDelayableHooks` / `HookInstaller` 的 6 处注入守卫只判 `isEnabled() && isTargetProcess()`。
+
+改动：
+
+| 文件 | 改动 |
+| --- | --- |
+| `core/HookInstaller.java` | 新增 `isHookApplicable(IDynamicHook)`（内部 try/catch `isAvailable`），`allowEarlyInit` 加判断 |
+| `core/InjectDelayableHooks.java` | 5 处守卫加 `HookInstaller.isHookApplicable(h)`（86 / 108 / 214 / 247 / 266 行） |
+| `dsl/FunctionEntryRouter.kt` | 构建设置树时跳过 `isAvailable == false` 的 `IDynamicHook`，功能不再出现在界面上 |
+| `fragment/SearchOverlaySubFragment.kt` | 搜索索引同步过滤，避免「搜得到但点不进」 |
+| `util/ClassAvailability.kt`（新） | `classExists(name)` / `classExistsAnd(name){}`，用于按「目标类是否存在」设门 |
+
+并给 7 个「类在本版本整包不存在」的 hook 补了类探测门（原来默认 `isAvailable = true`）：
+
+| hook | 探测的类 |
+| --- | --- |
+| `BlockLinkInfo` | `com.tencent.qqnt.kernel.nativeinterface.LinkInfo` |
+| `ForceUnfoldMessages` | `com.tencent.qqnt.kernel.nativeinterface.FoldingInfo` |
+| `HideGroupAssistantBanner` | `com.tencent.mobileqq.activity.home.chats.troophelper.TroopHelperFragment` |
+| `HideQZoneGuidePublishMoodBanner` | `com.qzone.component.banner.QZoneGuidePublishMoodBanner` |
+| `SimplifyQQSettingMe2` | `com.tencent.mobileqq.parts.QQSettingMeMenuPanelPartV3` |
+| `OffRelationshipIdentification` | `com.tencent.mobileqq.profilecard.component.ProfileInStepComponent` |
+| `AioChatPieClipPasteHook` | `com.tencent.qqnt.qbasealbum.WinkHomeActivity` |
+
+另两个按「资源/方法是否存在」设门：`QrLoginAuthSecCheckMitigation`（`R$id.confirm_risk_login_btn`）、
+`DisableProfileCardZplanCover`（`ProfileCardApiImpl.isProfileCardShowZplanCover`）。
+
+效果：这些功能不再出现在设置里，也不再在每次启动时初始化并报错。
+
+### 7.2 禁止回复自动@（用户说的「去除@」）
+
+`cc/ioctl/hook/ui/chat/ReplyNoAtHook.kt`，实机 `NoSuchElementException` 来自 `declaredMethods.single { }`。
+根因是**两处 Kotlin 包装类比较写错**，不是 QQ 改签名：
+
+- `method.returnType == Void::class.java` —— `java.lang.Void.class` ≠ `void.class`（`Void.TYPE`）
+- `params[2] == Boolean::class.java` —— `java.lang.Boolean.class` ≠ `boolean.class`
+
+两者恒 false，`single` 必然抛异常。改为 `Void.TYPE` / `Boolean.TYPE` 比较，并降级 `isStatic` 为
+「static 优先、否则退回」，`param.args` 下标按签名动态求。命中签名：
+`InputUIUtils;->a(AIOContext, BaseSessionInfo, Z)V`（`QQConfigTable.kt:80` 给 8.6.0+ 的类名）。
+
+同类问题一并修：`HideEditTroopNick`（方法名 `c`→`a`）、`ChangeCircleJumpProfile`
+（`returnType(Boolean::class.java)` 恒不等 + 方法名混淆，4 选 2 标推测）、
+`RemoveDialogWaitTime`（`Int::class.java` 恒不等 + `createCountdownDialog` 已消失，只消异常不恢复功能）。
+
+### 7.3 小程序分享转链接（接收）
+
+`me/singleneuron/hook/decorator/MiniAppToStruckMsg.kt`，实机 `errors: 21` 全是
+`ClassCastException: String cannot be cast to Class`。
+
+`Reflex.invokeVirtual` 的参数布局是「参数值…, 参数类型…, 返回类型」，`arcg = length / 2`。
+原来只传一个值 → `argc = 0` → 把 `structMsgJson` 当成返回类型强转成 `Class` 而炸。
+改为 `invoke("fromAppXml", structMsgJson, String::class.java, Boolean::class.javaPrimitiveType!!)`，
+对应 `ArkAppMessage.fromAppXml(Ljava/lang/String;)Z`。
+
+### 7.4 「强制显示高版本分享卡片」为什么无效
+
+**方向错了：那条消息不是 structmsg，是 Ark 消息。** `{"app":"com.tencent.tuwen.lua","view":"news","meta":{…}}`
+对应 `MessageForArkApp`，走 `ArkAppItemBubbleBuilder`；而 `mMsgException` 只在**二进制
+`readExternal`** 路径被置 true，8.8.50 的 `StructMsgFactory` 走 XML+SAX，根本不经过 `readExternal`，
+所以那个标记恒为构造时的 false —— hook 挂上了也只是空操作。
+
+三条证据：
+
+1. `AbsShareMsg` 三处 `mMsgException` 写入（dex13 偏移 1583222 / 1583295 / 1583791）全是构造函数初始化 false；
+2. 唯一置 true 的是 `StructMsgForGeneralShare.readExternal` 的 catch（1941014）；
+3. `getInCompatibleView` 零调用者，是死代码。
+
+同时修正了该 hook 的字段定位：原实现「找不到 `mMsgException` 就取继承链上唯一的 boolean 字段」有风险
+（该链上有 `mHasSource` / `mHasAdSource` 等多个 boolean），改为只按名精确取，取不到就报错，
+并在 description 里写明**只对二进制 structmsg 生效**。
+
+### 7.5 Ark 消息的正确解法（新增功能）
+
+8.8.50 对这条 Ark 消息走的是正常 `ArkAppView` 渲染，**Java 层没有任何「不支持」判定分支**：
+`ArkAppItemBubbleBuilder.getView` 调 `ArkAioContainerWrapper.a(appName, appView, appMinVersion,
+metaList, density, msg, session)Z`，返回值被直接丢弃（无 `move-result`），初始化失败只打一条
+`QLog.d("ArkApp.ArkAioContainerWrapper", 4, "super.init return false!!! wrapper: %h.")`。
+真正的降级在 native `libark` 内部，Java 侧没有 hook 点。
+
+因此新增 `io/github/qauxv/hook/experimental/ArkFallbackToText.kt`（「Ark 卡片降级为文本」，默认关闭）：
+
+- hook 点：`ArkAppItemBubbleBuilder` 里「5 参数 + 返回 View」的方法（`getView` 已混淆成 `a`，按签名定位，
+  全类唯一）
+- 进入前直接 `param.result = TextView`，原方法不执行 → Ark 容器不初始化
+- 文本：`promptText` → `mText` → `compatibleText` 依次兜底；点击打开 `metaList` 第一个 view 的
+  `jumpUrl`，兜底 `mSourceUrl`
+- 代价：开启后**所有 Ark 消息**都会变成文本气泡；要只针对特定 app，在 hooker 里加一行
+  `if (appName != "com.tencent.tuwen.lua") return`
+
+### 7.6 本轮验证
+
+| 项 | 状态 |
+| --- | --- |
+| `:app:compileDebugKotlin` | ✅ BUILD SUCCESSFUL |
+| `:app:assembleDebug` | ✅ 出包 `QAuxiliary-1.6.1-qq8850-r2-20261109.apk`（20 MB） |
+| 实机复测 | ⏳ 需重装后重新导出清单确认 errors 归零 |

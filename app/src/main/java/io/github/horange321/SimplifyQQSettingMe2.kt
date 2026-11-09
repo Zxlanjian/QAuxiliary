@@ -31,6 +31,7 @@ import io.github.qauxv.dsl.FunctionEntryRouter.Locations.Simplify
 import io.github.qauxv.util.Initiator.loadClass
 import xyz.nextalone.base.MultiItemDelayableHook
 import xyz.nextalone.util.method
+import io.github.qauxv.util.classExists
 
 
 @FunctionHookEntry

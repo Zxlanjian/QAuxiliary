@@ -26,6 +26,7 @@ import io.github.qauxv.base.annotation.FunctionHookEntry
 import io.github.qauxv.base.annotation.UiItemAgentEntry
 import io.github.qauxv.dsl.FunctionEntryRouter
 import io.github.qauxv.hook.CommonSwitchFunctionHook
+import io.github.qauxv.util.Log
 import io.github.qauxv.util.QQVersion
 import io.github.qauxv.util.requireMinQQVersion
 import me.hd.util.hookBeforeIfEnabled
@@ -44,21 +45,30 @@ object ChangeCircleJumpProfile : CommonSwitchFunctionHook() {
     override val isAvailable = requireMinQQVersion(QQVersion.QQ_8_9_88)
 
     override fun initOnce(): Boolean {
-        "com.tencent.biz.qqcircle.QCirclePluginUtil".toHostClass().also { circleClass ->
-            circleClass.singleMethod {
-                returnType(Boolean::class.java) &&
-                    name("canJumpToQQProfile") &&
-                    parameters(List::class.java)
-            }.hookBeforeIfEnabled(this) { param ->
-                param.result = true
-            }
-            circleClass.singleMethod {
-                returnType(Boolean::class.java) &&
-                    name("isJumpToQQProfileBeated") &&
-                    parameters(List::class.java)
-            }.hookBeforeIfEnabled(this) { param ->
-                param.result = false
-            }
+        // QQ 8.8.50: canJumpToQQProfile / isJumpToQQProfileBeated 被 r8 混淆为 a/b/c/d，
+        // 原 name(...) 条件导致 singleMethod 抛 NoSuchElementException。
+        // 改为按「返回 Boolean + 单个 List 参数」筛候选；名字命中优先，否则按源码顺序取前两个（推测映射）。
+        val circleClass = "com.tencent.biz.qqcircle.QCirclePluginUtil".toHostClass()
+        // 原条件 returnType(Boolean::class.java) 是 java.lang.Boolean.class，
+        // 而 Z 返回值的反射类型是 boolean.class（Boolean.TYPE），恒不相等 —— 改用原始类型比较。
+        val candidates = circleClass.declaredMethods.filter { m ->
+            (m.returnType == java.lang.Boolean.TYPE || m.returnType == java.lang.Boolean::class.java) &&
+                m.parameterTypes.size == 1 && m.parameterTypes[0] == List::class.java
+        }
+        val canJump = candidates.firstOrNull { it.name == "canJumpToQQProfile" } ?: candidates.getOrNull(0)
+        val beated = candidates.firstOrNull { it.name == "isJumpToQQProfileBeated" } ?: candidates.getOrNull(1)
+        if (canJump == null || beated == null || canJump == beated) {
+            Log.e("ChangeCircleJumpProfile: 8.8.50 找不到 (List)Z 候选方法, candidates=${candidates.joinToString(",") { it.name }}")
+            return false
+        }
+        Log.d("ChangeCircleJumpProfile: hooked ${canJump.name}->true, ${beated.name}->false, candidates=${candidates.joinToString(",") { it.name }}")
+        canJump.isAccessible = true
+        beated.isAccessible = true
+        canJump.hookBeforeIfEnabled(this) { param ->
+            param.result = true
+        }
+        beated.hookBeforeIfEnabled(this) { param ->
+            param.result = false
         }
         return true
     }

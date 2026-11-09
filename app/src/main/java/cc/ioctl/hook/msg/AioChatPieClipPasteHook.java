@@ -87,6 +87,7 @@ import kotlin.Pair;
 import mqq.app.AppRuntime;
 
 import static cc.ioctl.util.HostInfo.requireMinQQVersion;
+import io.github.qauxv.util.ClassAvailabilityKt;
 
 @FunctionHookEntry
 @UiItemAgentEntry
@@ -102,6 +103,15 @@ public class AioChatPieClipPasteHook extends CommonSwitchFunctionHook implements
 
     private AioChatPieClipPasteHook() {
         super(SyncUtils.PROC_MAIN, new DexKitTarget[]{NBaseChatPie_init.INSTANCE});
+    }
+
+    /**
+     * {@code com.tencent.qqnt.qbasealbum.WinkHomeActivity} 是 NT 相册（QQ 9.x）的类，8.8.50 没有；
+     * 本 hook 的宿主逻辑还依赖 NT aio 布局（按 send_btn 找兄弟节点），整条链路在旧客户端不成立。
+     */
+    @Override
+    public boolean isAvailable() {
+        return ClassAvailabilityKt.classExists("com.tencent.qqnt.qbasealbum.WinkHomeActivity");
     }
 
     @NonNull

@@ -45,5 +45,13 @@ object DisableProfileCardZplanCover : CommonSwitchFunctionHook() {
 
     override val uiItemLocation = FunctionEntryRouter.Locations.Simplify.UI_PROFILE
 
-    override val isAvailable = !isTim()
+    override val isAvailable = !isTim() && runCatching {
+        // 8.8.50 的 ProfileCardApiImpl 里没有这个方法（超级QQ秀 Zplan 封面是后续版本才有的），
+        // 直接用方法存在性做门，避免每次启动都抛 NoSuchMethodException。
+        Class.forName("com.tencent.mobileqq.profilecard.api.impl.ProfileCardApiImpl")
+            .getDeclaredMethod(
+                "isProfileCardShowZplanCover",
+                Class.forName("com.tencent.mobileqq.profilecard.data.ProfileCardInfo"),
+            )
+    }.isSuccess
 }
