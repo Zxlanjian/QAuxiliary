@@ -65,7 +65,10 @@ object GagInfoDisclosure : CommonSwitchFunctionHook(
     override val name = "显示设置禁言的管理"
     override val description = "总是显示哪个管理员设置了禁言"
     override val uiItemLocation = FunctionEntryRouter.Locations.Auxiliary.CHAT_CATEGORY
-    override val isAvailable = QAppUtils.isQQnt()
+    // 8.8.50 实测命中: Lcom/tencent/mobileqq/troop/utils/TroopGagMgr;->a(IJJJLjava/util/ArrayList;)V  (8.8.50 走 else 非 NT 分支)
+    // DexKit: Hd_GagInfoDisclosure_Method OK / CMessageRecordFactory OK / NContactUtils_getBuddyName OK / NContactUtils_getDiscussionMemberShowName OK
+    // initOnce 无 NT 专属路径 (NtGrayTipHelper 等均为 QAuxiliary 自身 bridge, 无 com.tencent.qqnt.*), 故补 8.8.50 短路
+    override val isAvailable = QAppUtils.isQQnt() || requireMinQQVersion(QQVersion.QQ_8_8_50)
 
     private fun getLongData(bArr: ByteArray, i: Int): Long {
         return (((bArr[i].toInt() and 255) shl 24) + ((bArr[i + 1].toInt() and 255) shl 16) + ((bArr[i + 2].toInt() and 255) shl 8) + ((bArr[i + 3].toInt() and 255) shl 0)).toLong()
@@ -126,6 +129,7 @@ object GagInfoDisclosure : CommonSwitchFunctionHook(
     }
 
     override fun initOnce(): Boolean {
+        Log.d("GagInfoDisclosure: 命中 TroopGagMgr.a(I, J, J, J, ArrayList)V (8.8.50 走非 NT 分支)")
         if (requireMinQQVersion(QQVersion.QQ_9_0_73) || requireMinTimVersion(TIMVersion.TIM_4_0_95_BETA)) {
             hookAfterIfEnabled(DexKit.requireMethodFromCache(Hd_GagInfoDisclosure_Method)) { param ->
                 val msgInfo = param.args[1]

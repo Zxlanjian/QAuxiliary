@@ -31,8 +31,10 @@ import io.github.qauxv.dsl.FunctionEntryRouter
 import io.github.qauxv.hook.CommonSwitchFunctionHook
 import io.github.qauxv.util.Initiator
 import io.github.qauxv.util.QQVersion
+import io.github.qauxv.util.classExists
 import io.github.qauxv.util.requireMinQQVersion
 import io.github.qauxv.util.requireRangeQQVersion
+import me.hd.util.hookBeforeIfEnabled
 
 @FunctionHookEntry
 @UiItemAgentEntry
@@ -40,9 +42,37 @@ object HideTroopToDo : CommonSwitchFunctionHook() {
     override val name = "隐藏群待办"
     override val description = "对群聊上方的群待办进行简单隐藏"
     override val uiItemLocation = FunctionEntryRouter.Locations.Simplify.CHAT_GROUP_TITLE
-    override val isAvailable = requireRangeQQVersion(QQVersion.QQ_8_9_88, QQVersion.QQ_9_0_68)
+
+    // QQ 8.8.50 里群待办条由 activity.aio.troop.trooptodo.TroopToDoController 控制，
+    // 与 8.9.88+ 的 TroopToDoTipsBarNew 不是同一套实现，但功能本体存在，因此把下限放宽到 8.8.50。
+    override val isAvailable = requireRangeQQVersion(QQVersion.QQ_8_8_50, QQVersion.QQ_9_0_68)
 
     override fun initOnce(): Boolean {
+        if (classExists("com.tencent.mobileqq.activity.aio.troop.trooptodo.TroopToDoController")) {
+            // QQ 8.8.50：Controller 直接持有待办条根 View，a(Z) 即 showTroopToDoBanner。
+            val controllerClass = Initiator.loadClass(
+                "com.tencent.mobileqq.activity.aio.troop.trooptodo.TroopToDoController"
+            )
+            controllerClass.declaredMethods.single {
+                it.name == "a" &&
+                    it.parameterTypes.size == 1 &&
+                    it.parameterTypes[0] == java.lang.Boolean.TYPE
+            }.hookBeforeIfEnabled(this) { param ->
+                // 直接吞掉"显示待办条"，待办条永不出现
+                param.result = null
+            }
+            // 双保险：待办条构造时把根 View 置为 GONE
+            val tipsBarClass = Initiator.loadClass(
+                "com.tencent.mobileqq.activity.aio.troop.trooptodo.TroopToDoTipsBar"
+            )
+            hookAfterIfEnabled(tipsBarClass.constructors.single { it.parameterTypes.size == 3 }) { param ->
+                tipsBarClass.declaredFields.firstOrNull { it.type == View::class.java }?.apply {
+                    isAccessible = true
+                    (get(param.thisObject) as? View)?.visibility = View.GONE
+                }
+            }
+            return true
+        }
         val tipsBarNewClass: Class<*>
         val reporterClass: Class<*>
         if (requireMinQQVersion(QQVersion.QQ_9_0_25)) {

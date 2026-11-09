@@ -30,6 +30,7 @@ import io.github.qauxv.base.annotation.UiItemAgentEntry
 import io.github.qauxv.dsl.FunctionEntryRouter
 import io.github.qauxv.hook.CommonSwitchFunctionHook
 import io.github.qauxv.util.Initiator
+import io.github.qauxv.util.Log
 import io.github.qauxv.util.QQVersion
 import io.github.qauxv.util.SyncUtils
 import io.github.qauxv.util.TIMVersion
@@ -42,20 +43,24 @@ import xyz.nextalone.util.throwOrTrue
 object ForcePhoneMode : CommonSwitchFunctionHook(targetProc = SyncUtils.PROC_ANY) {
 
     override val name = "强制手机模式"
-    override val description = "支持 QQ8.9.15 及以上，未经测试，谨慎使用"
+    override val description = "支持 QQ8.8.50 及以上，未经测试，谨慎使用"
     override val extraSearchKeywords: Array<String> = arrayOf("phone")
     override val uiItemLocation = FunctionEntryRouter.Locations.Auxiliary.EXPERIMENTAL_CATEGORY
     override val isApplicationRestartRequired = true
-    override val isAvailable = requireMinQQVersion(QQVersion.QQ_8_9_15) || requireMinTimVersion(TIMVersion.TIM_4_0_95_BETA)
+    // 8.8.50 实测: Lcom/tencent/common/config/AppSetting;->d()I 是唯一无参 Int 方法 (e()/f() 返回 String),
+    // 故方法名与静态字段名都做候选链兜底
+    override val isAvailable = requireMinQQVersion(QQVersion.QQ_8_8_50) || requireMinTimVersion(TIMVersion.TIM_4_0_95_BETA)
 
     override fun initOnce() = throwOrTrue {
         check(isAvailable) { "ForcePhoneMode is not available" }
         val appSettingClass = Initiator.loadClass("com.tencent.common.config.AppSetting")
+        val appIdMethodName = when {
+            requireMinQQVersion(QQVersion.QQ_9_2_30) -> "e"
+            requireMinQQVersion(QQVersion.QQ_8_9_15) -> "f"
+            else -> "d" // 8.8.50: e()/f() 已改为返回 String, 仅 d()I 为无参 Int 方法
+        }
         appSettingClass.findMethod {
-            returnType == Int::class.java && name == when {
-                requireMinQQVersion(QQVersion.QQ_9_2_30) -> "e"
-                else -> "f"
-            }
+            returnType == Int::class.java && name == appIdMethodName
         }.hookAfter {
             val (appIdPhone, appIdPad) = Pair(
                 when {
@@ -79,7 +84,21 @@ object ForcePhoneMode : CommonSwitchFunctionHook(targetProc = SyncUtils.PROC_ANY
                     else -> "f"
                 },
             )
-            it.result = appSettingClass.getStaticObjectAs<Int>(appIdPhone)
+            // 静态字段名随版本漂移, 按候选链取第一个可读的静态 int
+            fun readStaticInt(primary: String): Int? {
+                for (candidate in arrayOf(primary, "e", "f", "g", "d")) {
+                    val v = runCatching { appSettingClass.getStaticObjectAs<Int>(candidate) }.getOrNull()
+                    if (v != null) return v
+                }
+                return null
+            }
+            val phoneId = readStaticInt(appIdPhone)
+            if (phoneId == null) {
+                Log.e("ForcePhoneMode: 无法定位 AppSetting 的 appId 静态字段 (尝试: $appIdPhone/e/f/g/d), 本次不替换")
+            } else {
+                Log.d("ForcePhoneMode: 命中方法 AppSetting.$appIdMethodName()I, 使用静态字段值 $phoneId (pad 字段候选: $appIdPad)")
+                it.result = phoneId
+            }
         }
     }
 

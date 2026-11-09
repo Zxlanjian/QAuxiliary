@@ -26,6 +26,7 @@ import io.github.qauxv.base.annotation.FunctionHookEntry
 import io.github.qauxv.base.annotation.UiItemAgentEntry
 import io.github.qauxv.dsl.FunctionEntryRouter
 import io.github.qauxv.hook.CommonSwitchFunctionHook
+import io.github.qauxv.util.Log
 import io.github.qauxv.util.QQVersion
 import io.github.qauxv.util.requireMinQQVersion
 import me.hd.util.hookBeforeIfEnabled
@@ -39,9 +40,11 @@ import me.hd.util.toHostClass
 object RandomBubble : CommonSwitchFunctionHook() {
     override val name = "随机气泡"
     override val uiItemLocation = FunctionEntryRouter.Locations.Entertainment.ENTERTAIN_CATEGORY
-    override val isAvailable = requireMinQQVersion(QQVersion.QQ_9_2_30)
+    // 目标 Lcom/tencent/mobileqq/app/SVIPHandler;->getSubBubbleId()I 在 8.8.50 已存在, 放宽版本门
+    override val isAvailable = requireMinQQVersion(QQVersion.QQ_8_8_50)
 
     override fun initOnce(): Boolean {
+        Log.d("RandomBubble: 命中 SVIPHandler.getSubBubbleId()I")
         "com.tencent.mobileqq.app.SVIPHandler".toHostClass()
             .singleMethod {
                 returnType(Int::class.java) &&

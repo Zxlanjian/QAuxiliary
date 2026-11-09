@@ -49,7 +49,10 @@ import io.github.qauxv.dsl.FunctionEntryRouter
 import io.github.qauxv.hook.CommonSwitchFunctionHook
 import io.github.qauxv.ui.CommonContextWrapper
 import io.github.qauxv.util.Initiator
+import io.github.qauxv.util.Log
+import io.github.qauxv.util.QQVersion
 import io.github.qauxv.util.Toasts
+import io.github.qauxv.util.requireMinQQVersion
 import io.github.qauxv.util.dexkit.DexKit
 import io.github.qauxv.util.dexkit.RecentPopup_onClickAction
 import xyz.nextalone.util.get
@@ -58,16 +61,22 @@ import xyz.nextalone.util.throwOrTrue
 @FunctionHookEntry
 @UiItemAgentEntry
 object InternalBrowserMenu : CommonSwitchFunctionHook(targets = arrayOf(RecentPopup_onClickAction)) {
+    private const val TAG = "InternalBrowserMenu"
     override val name = "内部浏览器菜单"
     override val description = "在首页加号菜单中添加打开内部浏览器功能"
     override val uiItemLocation = FunctionEntryRouter.Locations.Auxiliary.MISC_CATEGORY
-    override val isAvailable = QAppUtils.isQQnt()
+    // 8.8.50 实测命中: Lcom/tencent/widget/PopupMenuDialog;->conversationPlusBuild(Landroid/app/Activity;Ljava/util/List;Lcom/tencent/widget/PopupMenuDialog$OnClickActionListener;Lcom/tencent/widget/PopupMenuDialog$OnDismissListener;)Lcom/tencent/widget/PopupMenuDialog;
+    //                Lcom/tencent/widget/PopupMenuDialog$MenuItem;-><init>(ILjava/lang/String;Ljava/lang/String;I)V
+    //                DexKit RecentPopup_onClickAction 特征串 "jiahao.fukuan.click" (classes8.dex)
+    // initOnce 无 NT 专属路径 (无 com.tencent.qqnt.*), 故补 8.8.50 短路
+    override val isAvailable = QAppUtils.isQQnt() || requireMinQQVersion(QQVersion.QQ_8_8_50)
 
     private const val BOOKMARKS_KEY = "internal_browser_bookmarks"
     private const val DEFAULT_URL = "https://www.google.com"
 
     override fun initOnce(): Boolean {
         return throwOrTrue {
+            Log.d("$TAG: initOnce: PopupMenuDialog.conversationPlusBuild + PopupMenuDialog\$MenuItem.<init>(ILjava/lang/String;Ljava/lang/String;I)V + RecentPopup_onClickAction 均已命中")
             val menuItemId = 414415
             val entryMenuItem = Initiator.loadClass("com.tencent.widget.PopupMenuDialog\$MenuItem").newInstance(
                 args(menuItemId, "内部浏览器", "内部浏览器", R.drawable.ic_item_tool_72dp),

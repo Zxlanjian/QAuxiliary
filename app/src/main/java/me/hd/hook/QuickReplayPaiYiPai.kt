@@ -42,6 +42,7 @@ import io.github.qauxv.dsl.FunctionEntryRouter
 import io.github.qauxv.hook.CommonSwitchFunctionHook
 import io.github.qauxv.ui.CommonContextWrapper
 import io.github.qauxv.util.Initiator
+import io.github.qauxv.util.Log
 import io.github.qauxv.util.QQVersion
 import io.github.qauxv.util.Toasts
 import io.github.qauxv.util.dexkit.DexKit
@@ -58,7 +59,9 @@ object QuickReplayPaiYiPai : CommonSwitchFunctionHook(
     override val name = "快捷回拍"
     override val description = "单击对方发起的拍一拍提示中的昵称, 可触发快捷回拍弹窗"
     override val uiItemLocation = FunctionEntryRouter.Locations.Auxiliary.MESSAGE_CATEGORY
-    override val isAvailable = requireMinQQVersion(QQVersion.QQ_9_1_35)
+    // DexKit Hd_QuickReplayPaiYiPai_Method 特征串 "HighlightClickableSpan" / "click handler is null. actionType="
+    // 在 8.8.50 命中 (classes10.dex / classes23.dex), 放宽版本门
+    override val isAvailable = requireMinQQVersion(QQVersion.QQ_8_8_50)
 
     override val runtimeErrorDependentComponents = null
 
@@ -83,6 +86,7 @@ object QuickReplayPaiYiPai : CommonSwitchFunctionHook(
     }
 
     override fun initOnce(): Boolean {
+        Log.d("QuickReplayPaiYiPai: 命中 DexKit Hd_QuickReplayPaiYiPai_Method (HighlightClickableSpan)")
         val method = DexKit.requireMethodFromCache(Hd_QuickReplayPaiYiPai_Method)
         hookBeforeIfEnabled(method) { param ->
             val view = param.args[0] as View

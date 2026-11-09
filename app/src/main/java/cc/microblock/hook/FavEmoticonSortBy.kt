@@ -34,6 +34,7 @@ import io.github.qauxv.config.ConfigManager
 import io.github.qauxv.dsl.FunctionEntryRouter
 import io.github.qauxv.hook.CommonConfigFunctionHook
 import io.github.qauxv.util.Initiator
+import io.github.qauxv.util.Log
 import io.github.qauxv.util.QQVersion
 import io.github.qauxv.util.dexkit.AIOPicElementType
 import io.github.qauxv.util.dexkit.DexKit
@@ -92,7 +93,9 @@ object FavEmoticonSortBy : CommonConfigFunctionHook("FavEmoticonSortBy", arrayOf
             throw UnsupportedOperationException()
         }
     override val uiItemLocation = FunctionEntryRouter.Locations.Auxiliary.CHAT_CATEGORY
-    override val isAvailable = QAppUtils.isQQnt()
+    // 8.8.50 实测命中: Lcom/tencent/mobileqq/emosm/api/impl/FavroamingDBManagerServiceImpl;->getEmoticonDataList()Ljava/util/List;
+    // 辅助 DexKit AIOPicElementType 特征串 "PicElement(origPath=" 在本版本 MISS, 排序主功能仍可用, 计数部分降级
+    override val isAvailable = QAppUtils.isQQnt() || requireMinQQVersion(QQVersion.QQ_8_8_50)
     override fun initOnce(): Boolean {
         HookUtils.hookAfterIfEnabled(
             this, Reflex.findMethod(
@@ -107,22 +110,27 @@ object FavEmoticonSortBy : CommonConfigFunctionHook("FavEmoticonSortBy", arrayOf
                 Pair(it, db.getLongOrDefault(path, 0))
             }.toTypedArray().sortedBy { it.second }.map { it.first }.toList()
         }
-        DexKit.requireClassFromCache(AIOPicElementType).hookAllConstructorAfter {
-            if (!this.isEnabled) return@hookAllConstructorAfter
-            val (subTypeName, origPathName) = when {
-                requireMinQQVersion(QQVersion.QQ_9_0_60) -> Pair("h", "e")/* 9.0.60 ~ 9.0.65 */
-                else -> Pair("d", "a")/* 8.9.88 ~ 9.0.50 */
-            }
-            if (it.thisObject.get(subTypeName) == 1 /* 1 for emoticons */) {
-                val db = ConfigManager.getLastUseEmoticonStore()
-                val path = it.thisObject.get(origPathName) as String
-                if (this.state == SortOptions.SortByLastUse) {
-                    db.putLong(path, System.currentTimeMillis())
-                } else {
-                    val lastUse = db.getLongOrDefault(path, 0)
-                    db.putLong(path, lastUse + 1)
+        // AIOPicElementType 在 8.8.50 MISS, 该段只负责"计数/上次使用时间"打点, 缺失时排序主功能照常工作
+        runCatching {
+            DexKit.requireClassFromCache(AIOPicElementType).hookAllConstructorAfter {
+                if (!this.isEnabled) return@hookAllConstructorAfter
+                val (subTypeName, origPathName) = when {
+                    requireMinQQVersion(QQVersion.QQ_9_0_60) -> Pair("h", "e")/* 9.0.60 ~ 9.0.65 */
+                    else -> Pair("d", "a")/* 8.9.88 ~ 9.0.50 */
+                }
+                if (it.thisObject.get(subTypeName) == 1 /* 1 for emoticons */) {
+                    val db = ConfigManager.getLastUseEmoticonStore()
+                    val path = it.thisObject.get(origPathName) as String
+                    if (this.state == SortOptions.SortByLastUse) {
+                        db.putLong(path, System.currentTimeMillis())
+                    } else {
+                        val lastUse = db.getLongOrDefault(path, 0)
+                        db.putLong(path, lastUse + 1)
+                    }
                 }
             }
+        }.onFailure {
+            Log.e("FavEmoticonSortBy: AIOPicElementType 不可用, 跳过使用计数打点: ${it.message}")
         }
         return true
     }

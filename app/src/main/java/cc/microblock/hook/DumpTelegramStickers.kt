@@ -27,6 +27,7 @@ import io.github.qauxv.config.ConfigManager
 import io.github.qauxv.dsl.FunctionEntryRouter
 import io.github.qauxv.hook.CommonConfigFunctionHook
 import io.github.qauxv.util.Initiator
+import io.github.qauxv.util.Log
 import io.github.qauxv.util.QQVersion
 import io.github.qauxv.util.requireMinQQVersion
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -505,6 +506,9 @@ object DumpTelegramStickers : CommonConfigFunctionHook() {
             it.result = list
         }
         // 面板数据
+        // 8.8.50: EmotionPanelViewPagerAdapter 无 getEmotionPanelData / queryEmoticonsByPackageIdFromDB,
+        // 面板数据注入降级跳过; 图标(generateTabUrl)、点击拦截(handleIPSite)、FavoriteEmoticonInfo 主路径均已命中
+        runCatching {
         HookUtils.hookBeforeIfEnabled(this, EmotionPanelViewPagerAdapter.method("getEmotionPanelData")?:EmotionPanelViewPagerAdapter.method("queryEmoticonsByPackageIdFromDB")!!) {
             val pkg = it.args[2].get("emotionPkg") ?: return@hookBeforeIfEnabled
             val epid = pkg.get("epId")?: return@hookBeforeIfEnabled
@@ -524,9 +528,15 @@ object DumpTelegramStickers : CommonConfigFunctionHook() {
                 }
             }
         }
+        }.onFailure {
+            Log.e("DumpTelegramStickers: getEmotionPanelData/queryEmoticonsByPackageIdFromDB 不可用, 跳过面板数据注入: ${it.message}")
+        }
 
         return true
     }
 
-    override val isAvailable: Boolean get() = requireMinQQVersion(QQVersion.QQ_9_0_8)
+    // 主目标 Lcom/tencent/mobileqq/emoticonview/FavoriteEmoticonInfo;->getDrawable(Landroid/content/Context;F)Landroid/graphics/drawable/Drawable;
+    // 与 getZoomDrawable(Landroid/content/Context;FII)Landroid/graphics/drawable/Drawable;、EmoticonTabAdapter.generateTabUrl(Ljava/lang/String;Z)Ljava/net/URL;、
+    // EmotionPanelViewPagerAdapter.handleIPSite(...)V 在 8.8.50 均已命中
+    override val isAvailable: Boolean get() = requireMinQQVersion(QQVersion.QQ_8_8_50)
 }

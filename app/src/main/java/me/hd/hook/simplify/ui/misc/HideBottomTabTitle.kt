@@ -31,6 +31,7 @@ import io.github.qauxv.base.annotation.FunctionHookEntry
 import io.github.qauxv.base.annotation.UiItemAgentEntry
 import io.github.qauxv.dsl.FunctionEntryRouter
 import io.github.qauxv.hook.CommonSwitchFunctionHook
+import io.github.qauxv.util.Log
 import io.github.qauxv.util.QQVersion
 import io.github.qauxv.util.requireMinQQVersion
 import me.hd.util.hookAfterIfEnabled
@@ -45,14 +46,16 @@ import me.hd.util.toHostClass
 object HideBottomTabTitle : CommonSwitchFunctionHook() {
     override val name = "隐藏底栏标题"
     override val uiItemLocation = FunctionEntryRouter.Locations.Simplify.UI_MISC
-    override val isAvailable = requireMinQQVersion(QQVersion.QQ_8_9_88)
+    // 8.8.50 实测命中: Lcom/tencent/mobileqq/activity/home/impl/TabFrameControllerImpl;->generateTabItem(IIIIIII)Landroid/view/View;
+    // 参数个数随版本漂移 (8.8.50=7, 8.9.88~9.0.20=11, >=9.0.30=12), 改为只锁返回类型与方法名
+    override val isAvailable = requireMinQQVersion(QQVersion.QQ_8_8_50)
 
     override fun initOnce(): Boolean {
+        Log.d("HideBottomTabTitle: 命中 TabFrameControllerImpl.generateTabItem(IIIIIII)Landroid/view/View")
         "com.tencent.mobileqq.activity.home.impl.TabFrameControllerImpl".toHostClass()
             .singleMethod {
                 returnType(View::class.java) &&
-                    name("generateTabItem") &&
-                    parameterCount(if (requireMinQQVersion(QQVersion.QQ_9_0_30)) 12 else 11)
+                    name("generateTabItem")
             }.hookAfterIfEnabled(this) { param ->
                 val viewGroup = param.result as ViewGroup
                 viewGroup.findViewByCondition {

@@ -30,9 +30,16 @@ import io.github.qauxv.dsl.FunctionEntryRouter
 import io.github.qauxv.hook.CommonSwitchFunctionHook
 import io.github.qauxv.util.Initiator
 import io.github.qauxv.util.QQVersion
+import io.github.qauxv.util.classExists
 import io.github.qauxv.util.dexkit.DexKit
 import io.github.qauxv.util.dexkit.DisableLightInteractionMethod
 import io.github.qauxv.util.requireMinQQVersion
+import me.hd.util.hookAfterIfEnabled
+import me.hd.util.parameterCount
+import me.hd.util.returnType
+import me.hd.util.singleMethod
+import me.hd.util.toHostClass
+import android.view.View
 
 @FunctionHookEntry
 @UiItemAgentEntry
@@ -44,9 +51,23 @@ object DisableLightInteraction : CommonSwitchFunctionHook(
     override val description = "隐藏聊天列表有时出现的表情 (早上好, 戳一戳, 晚安) 点一下发一条消息然后消失"
     override val extraSearchKeywords: Array<String> = arrayOf("开始全新的一天，早上好啊", "戳一戳，看看他在干嘛", "夜深了，和他道一声晚安吧")
     override val uiItemLocation: Array<String> = FunctionEntryRouter.Locations.Simplify.MAIN_UI_MSG_LIST
-    override val isAvailable: Boolean get() = requireMinQQVersion(QQVersion.QQ_8_9_78)
+
+    // 8.8.50 没有 NT 的 LiteActionBottomBar 轻互动入口，但同一功能以 MessageForPokeEmo
+    // (轻互动表情) 消息的形式存在于聊天列表，因此下限放宽到 8.8.50。
+    override val isAvailable: Boolean get() = requireMinQQVersion(QQVersion.QQ_8_8_50)
 
     override fun initOnce(): Boolean {
+        if (!classExists("com.tencent.qqnt.biz.lightbusiness.lightinteraction.LIAConfigManager")) {
+            // QQ 8.8.50：轻互动 = MessageForPokeEmo 消息，气泡由 PokeEmoItemBuilder 构建
+            "com.tencent.mobileqq.activity.aio.item.PokeEmoItemBuilder".toHostClass()
+                .singleMethod {
+                    returnType(View::class.java) &&
+                        parameterCount(5)
+                }.hookAfterIfEnabled(this) { param ->
+                    (param.result as? View)?.visibility = View.GONE
+                }
+            return true
+        }
         val kLIAConfigManager = Initiator.loadClass("com.tencent.qqnt.biz.lightbusiness.lightinteraction.LIAConfigManager")
         if (requireMinQQVersion(QQVersion.QQ_9_0_8)) {
             kLIAConfigManager.declaredMethods.single {

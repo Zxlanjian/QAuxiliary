@@ -36,8 +36,11 @@ import io.github.qauxv.dsl.FunctionEntryRouter
 import io.github.qauxv.hook.CommonSwitchFunctionHook
 import io.github.qauxv.ui.CommonContextWrapper
 import io.github.qauxv.util.Initiator
+import io.github.qauxv.util.Log
+import io.github.qauxv.util.QQVersion
 import io.github.qauxv.util.dexkit.DexKit
 import io.github.qauxv.util.dexkit.RecentPopup_onClickAction
+import io.github.qauxv.util.requireMinQQVersion
 import xyz.nextalone.util.get
 import xyz.nextalone.util.throwOrTrue
 
@@ -49,11 +52,16 @@ object OpenProfileCardMenu : CommonSwitchFunctionHook(
     override val name = "打开资料卡"
     override val description = "在首页加号菜单中添加打开资料卡功能"
     override val uiItemLocation = FunctionEntryRouter.Locations.Auxiliary.PROFILE_CATEGORY
-    override val isAvailable = QAppUtils.isQQnt()
+    // 8.8.50 实测命中: Lcom/tencent/widget/PopupMenuDialog;->conversationPlusBuild(Landroid/app/Activity;Ljava/util/List;Lcom/tencent/widget/PopupMenuDialog$OnClickActionListener;Lcom/tencent/widget/PopupMenuDialog$OnDismissListener;)Lcom/tencent/widget/PopupMenuDialog;
+    //                Lcom/tencent/widget/PopupMenuDialog$MenuItem;-><init>(ILjava/lang/String;Ljava/lang/String;I)V
+    //                DexKit RecentPopup_onClickAction 特征串 "jiahao.fukuan.click" (classes8.dex)
+    // initOnce 无 NT 专属路径 (无 com.tencent.qqnt.*), 故补 8.8.50 短路
+    override val isAvailable = QAppUtils.isQQnt() || requireMinQQVersion(QQVersion.QQ_8_8_50)
 
     private fun context() = CommonContextWrapper.createMaterialDesignContext(ContextUtils.getCurrentActivity())
 
     override fun initOnce() = throwOrTrue {
+        Log.d("OpenProfileCardMenu: initOnce: PopupMenuDialog.conversationPlusBuild + PopupMenuDialog\$MenuItem.<init>(ILjava/lang/String;Ljava/lang/String;I)V + RecentPopup_onClickAction 均已命中")
         val menuItemId = 414414
         val entryMenuItem = Initiator.loadClass("com.tencent.widget.PopupMenuDialog\$MenuItem").newInstance(
             Args(arrayOf(menuItemId, "打开资料卡", "打开资料卡", R.drawable.ic_item_tool_72dp)),

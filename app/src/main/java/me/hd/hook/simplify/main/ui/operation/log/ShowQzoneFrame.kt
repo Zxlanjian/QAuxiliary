@@ -27,6 +27,7 @@ import io.github.qauxv.base.annotation.FunctionHookEntry
 import io.github.qauxv.base.annotation.UiItemAgentEntry
 import io.github.qauxv.dsl.FunctionEntryRouter
 import io.github.qauxv.hook.CommonSwitchFunctionHook
+import io.github.qauxv.util.Log
 import io.github.qauxv.util.QQVersion
 import io.github.qauxv.util.requireMinQQVersion
 import me.hd.util.hookBeforeIfEnabled
@@ -43,9 +44,12 @@ object ShowQzoneFrame : CommonSwitchFunctionHook() {
     override val name = "显示空间动态"
     override val description = "点击底栏动态Tab时直接显示空间动态"
     override val uiItemLocation = FunctionEntryRouter.Locations.Simplify.MAIN_UI_OPERATION_LOG
-    override val isAvailable = requireMinQQVersion(QQVersion.QQ_9_2_30)
+    // 目标 Lcom/tencent/qzonehub/api/impl/QZoneApiProxyImpl;->needShowQzoneFrame(Landroid/content/Context;Lmqq/app/AppRuntime;)Z
+    // 在 8.8.50 已存在, 放宽版本门
+    override val isAvailable = requireMinQQVersion(QQVersion.QQ_8_8_50)
 
     override fun initOnce(): Boolean {
+        Log.d("ShowQzoneFrame: 命中 QZoneApiProxyImpl.needShowQzoneFrame(Context, AppRuntime)Z")
         "com.tencent.qzonehub.api.impl.QZoneApiProxyImpl".toHostClass()
             .singleMethod {
                 returnType(Boolean::class.java) &&
