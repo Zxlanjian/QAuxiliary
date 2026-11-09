@@ -27,21 +27,25 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class MiniAppArkData(
-    val desc: String,
-    val prompt: String,
-    val meta: Map<String, MiniAppArkDetailData>,
-    val config: ArkMsgConfigData,
-    val extra: String,
+    val desc: String = "",
+    val prompt: String = "",
+    val meta: Map<String, MiniAppArkDetailData> = emptyMap(),
+    val config: ArkMsgConfigData = ArkMsgConfigData(),
+    val extra: String = "",
 ) {
     override fun toString(): String = this.encodeToJson()
 }
 
 @Serializable
 data class MiniAppArkDetailData(
-    val desc: String,
-    val preview: String,
-    val qqdocurl: String,
-    val title: String
+    val desc: String = "",
+    val preview: String = "",
+    val qqdocurl: String = "",
+    val title: String = "",
+    val jumpUrl: String = "",
+    val url: String = "",
+    val tag: String = "",
+    val icon: String = "",
 )
 
 @Serializable
