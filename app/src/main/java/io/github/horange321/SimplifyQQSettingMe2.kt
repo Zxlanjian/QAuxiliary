@@ -145,18 +145,15 @@ object SimplifyQQSettingMe2 : MultiItemDelayableHook(
         val settingMeClass = loadClass("com.tencent.mobileqq.activity.QQSettingMe")
         val bizBeanClass = loadClass("com.tencent.mobileqq.activity.qqsettingme.config.QQSettingMeBizBean")
 
-        // QQSettingMeBizBean.a()Ljava/lang/String;  → bizId
-        val getBizId = bizBeanClass.declaredMethods.firstOrNull {
-            it.name == "a" && it.parameterTypes.isEmpty() && it.returnType == String::class.java
-        } ?: run {
-            Log.w("SimplifyQQSettingMe2: QQSettingMeBizBean.a()String 未找到")
-            return false
-        }
-        getBizId.isAccessible = true
+        // QQSettingMeBizBean.a()Ljava/lang/String; → bizId 只在 8.8.50 存在；8.8.98 里该 getter 改成了
+        // e()/f()/g()/k()/l() 中的一个（无参返回 String 的有 5 个，无法靠名字判断哪个是 bizId）。
+        // 因此不依赖 getter：直接遍历 bean 的所有 String 字段比对 map key（needRemove 已有该逻辑），
+        // bizId 本身就是 bean 的一个 String 字段，任何版本都成立。
 
-        // private boolean QQSettingMe.a(QQSettingMeBizBean)
+        // private boolean QQSettingMe.a(QQSettingMeBizBean)  → 8.8.98: W(QQSettingMeBizBean)Z
+        // 同签名候选：T(QQSettingMeLevelAndMedalBean)Z / U()Z / V()Z，靠参数类型 == bizBeanClass 唯一确定。
         val isItemHidden = settingMeClass.declaredMethods.firstOrNull {
-            it.returnType == Boolean::class.javaPrimitiveType &&
+            it.returnType == java.lang.Boolean.TYPE &&
                 it.parameterTypes.size == 1 && it.parameterTypes[0] == bizBeanClass
         } ?: run {
             Log.w("SimplifyQQSettingMe2: QQSettingMe.a(QQSettingMeBizBean)Z 未找到")
@@ -164,10 +161,11 @@ object SimplifyQQSettingMe2 : MultiItemDelayableHook(
         }
         isItemHidden.isAccessible = true
 
+        Log.d("SimplifyQQSettingMe2: 命中 ${settingMeClass.name}.${isItemHidden.name}(QQSettingMeBizBean)Z")
+
         hookAfterIfEnabled(this, isItemHidden) { param ->
             val bean = param.args[0] ?: return@hookAfterIfEnabled
-            val bizId = getBizId.invoke(bean) as? String ?: return@hookAfterIfEnabled
-            if (map[bizId] in activeItems) {
+            if (needRemove(bean)) {
                 param.result = true
             }
         }

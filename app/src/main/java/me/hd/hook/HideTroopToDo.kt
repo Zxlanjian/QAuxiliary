@@ -53,11 +53,18 @@ object HideTroopToDo : CommonSwitchFunctionHook() {
             val controllerClass = Initiator.loadClass(
                 "com.tencent.mobileqq.activity.aio.troop.trooptodo.TroopToDoController"
             )
-            controllerClass.declaredMethods.single {
-                it.name == "a" &&
-                    it.parameterTypes.size == 1 &&
+            // 8.8.50: a(Z)V → 8.8.98: e(Z)V。混淆名逐版本变，按签名 (boolean)void 匹配，旧名 a 优先做 fallback。
+            val showMethod = controllerClass.declaredMethods.firstOrNull {
+                it.name == "a" && it.parameterTypes.size == 1 &&
                     it.parameterTypes[0] == java.lang.Boolean.TYPE
-            }.hookBeforeIfEnabled(this) { param ->
+            } ?: controllerClass.declaredMethods.firstOrNull {
+                it.parameterTypes.size == 1 &&
+                    it.parameterTypes[0] == java.lang.Boolean.TYPE &&
+                    it.returnType == Void.TYPE
+            } ?: throw NoSuchMethodException(
+                "TroopToDoController.showTroopToDoBanner(boolean) not found in ${controllerClass.name}"
+            )
+            showMethod.hookBeforeIfEnabled(this) { param ->
                 // 直接吞掉"显示待办条"，待办条永不出现
                 param.result = null
             }
@@ -65,7 +72,12 @@ object HideTroopToDo : CommonSwitchFunctionHook() {
             val tipsBarClass = Initiator.loadClass(
                 "com.tencent.mobileqq.activity.aio.troop.trooptodo.TroopToDoTipsBar"
             )
-            hookAfterIfEnabled(tipsBarClass.constructors.single { it.parameterTypes.size == 3 }) { param ->
+            // 8.8.50 / 8.8.98 均为 (AIOContext, QQAppInterface, TroopToDoController) 三参构造
+            val tipsBarCtor = tipsBarClass.constructors.firstOrNull { it.parameterTypes.size == 3 }
+                ?: throw NoSuchMethodException(
+                    "TroopToDoTipsBar 3-arg constructor not found in ${tipsBarClass.name}"
+                )
+            hookAfterIfEnabled(tipsBarCtor) { param ->
                 tipsBarClass.declaredFields.firstOrNull { it.type == View::class.java }?.apply {
                     isAccessible = true
                     (get(param.thisObject) as? View)?.visibility = View.GONE

@@ -89,44 +89,59 @@ object QSecFrozenBypass : CommonSwitchFunctionHook("qauxv_qsec_frozen_bypass") {
     override val uiItemLocation = FunctionEntryRouter.Locations.Auxiliary.EXPERIMENTAL_CATEGORY
 
     override fun initOnce(): Boolean = throwOrTrue {
-        hookFrozenDlgHelper()
+        val ok = hookFrozenDlgHelper()
         if (LEVEL >= 2) {
             hookBuiltInServlet()
         }
         if (LEVEL >= 3) {
             hookKickToLogin()
         }
-        Log.d("$TAG: initOnce done, LEVEL=$LEVEL")
+        Log.d("$TAG: initOnce done, LEVEL=$LEVEL, frozenHelperHooked=$ok")
+        ok
     }
 
-    /** FrozenNotifyDlgHelper.a([B)Z / b([B)I：把「是否冻结」「冻结场景」改成否/无效。 */
-    private fun hookFrozenDlgHelper() {
+    /**
+     * FrozenNotifyDlgHelper 的「是否冻结 / 冻结场景」判定。
+     *
+     * 8.8.50: a([B)Z（shouldHandleByDlgHelper）+ b([B)I（getForbidScene）
+     * 8.8.98: 该类只剩 c([B)I 一个 byte[] 入参方法（`rg '^Lcom/tencent/mobileqq/app/security/FrozenNotifyDlgHelper;->'`），
+     *         Z 版本判定已被内联进 NotificationActivity，所以这里按「返回类型」匹配而不是写死名字：
+     *         有 ([B)Z 就拦成 false（8.8.50 路径），没有就只把 ([B)I 的场景码改成 -1（8.8.98 路径）。
+     *         scene ∉ {2,3,4} 即不进入统一冻结样式，效果等价。
+     */
+    private fun hookFrozenDlgHelper(): Boolean {
         val clazz = Initiator.loadClass(CLS_DLG_HELPER)
         val byteArray = ByteArray::class.java
 
-        // a([B)Z → shouldHandleByDlgHelper
-        val shouldHandle = clazz.declaredMethods.firstOrNull {
-            it.parameterTypes.size == 1 && it.parameterTypes[0] == byteArray &&
-                it.returnType == java.lang.Boolean.TYPE
-        } ?: throw NoSuchMethodException("FrozenNotifyDlgHelper.a([B)Z not found")
+        val byteArrayMethods = clazz.declaredMethods.filter {
+            it.parameterTypes.size == 1 && it.parameterTypes[0] == byteArray
+        }
+        val shouldHandle = byteArrayMethods.firstOrNull { it.returnType == java.lang.Boolean.TYPE }
+        val getScene = byteArrayMethods.firstOrNull { it.returnType == java.lang.Integer.TYPE }
 
-        shouldHandle.hookBefore { param ->
-            param.result = false
-            Log.d("$TAG: shouldHandleByDlgHelper(tlverror) → false")
+        var hooked = false
+        if (shouldHandle != null) {
+            shouldHandle.hookBefore { param ->
+                param.result = false
+                Log.d("$TAG: shouldHandleByDlgHelper(tlverror) → false")
+            }
+            hooked = true
+        } else {
+            Log.w("$TAG: FrozenNotifyDlgHelper 已无 ([B)Z（8.8.98 起内联到 NotificationActivity），降级为 scene=-1")
         }
 
-        // b([B)I → getForbidScene
-        val getScene = clazz.declaredMethods.firstOrNull {
-            it.parameterTypes.size == 1 && it.parameterTypes[0] == byteArray &&
-                it.returnType == java.lang.Integer.TYPE
-        } ?: throw NoSuchMethodException("FrozenNotifyDlgHelper.b([B)I not found")
-
-        getScene.hookBefore { param ->
-            param.result = -1
-            Log.d("$TAG: getForbidScene(tlverror) → -1")
+        if (getScene != null) {
+            getScene.hookBefore { param ->
+                param.result = -1
+                Log.d("$TAG: getForbidScene(tlverror) → -1")
+            }
+            hooked = true
+        } else {
+            Log.e("$TAG: FrozenNotifyDlgHelper 中 ([B)I 也未找到，本 hook 在 ${clazz.name} 上无落点")
         }
 
-        Log.d("$TAG: hooked ${clazz.name}.${shouldHandle.name}/${getScene.name}")
+        Log.d("$TAG: frozen helper hooked=$hooked, candidates=${byteArrayMethods.joinToString { it.name + it.returnType.simpleName }}")
+        return hooked
     }
 
     /** BuiltInServlet.bundlePutTlv543(FromServiceMsg, Bundle)：把 TLV1347 写进 Bundle 之后摘掉。 */

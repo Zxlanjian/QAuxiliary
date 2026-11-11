@@ -70,17 +70,25 @@ object HideQQValue : CommonSwitchFunctionHook() {
     override fun initOnce(): Boolean {
         val qqValueClass = Initiator.loadClass("com.tencent.mobileqq.vas.qqvaluecard.view.QQValuePagView")
         // 8.8.50: a(Ljava/lang/String;Ljava/lang/String;Z)V
-        // 老版本注释里写的 qqValueMethodName 也是同一签名，混淆名逐版本变，这里按签名匹配。
+        // 8.8.98: v(Ljava/lang/String;Ljava/lang/String;Z)V
+        // 混淆名逐版本变，按签名匹配（该签名在类内唯一），旧名 a 优先。
         val qqValueMethod = qqValueClass.declaredMethods.firstOrNull {
+            it.name == "a" && it.returnType == Void.TYPE &&
+                it.parameterTypes.size == 3 &&
+                it.parameterTypes[0] == String::class.java &&
+                it.parameterTypes[1] == String::class.java &&
+                it.parameterTypes[2] == java.lang.Boolean.TYPE
+        } ?: qqValueClass.declaredMethods.firstOrNull {
             it.returnType == Void.TYPE &&
                 it.parameterTypes.size == 3 &&
                 it.parameterTypes[0] == String::class.java &&
                 it.parameterTypes[1] == String::class.java &&
-                it.parameterTypes[2] == Boolean::class.javaPrimitiveType
+                it.parameterTypes[2] == java.lang.Boolean.TYPE
         } ?: run {
             Log.w("HideQQValue: QQValuePagView 中未找到 (String, String, boolean) 方法")
             return false
         }
+        Log.d("HideQQValue: 命中 ${qqValueClass.name}.${qqValueMethod.name}(String,String,boolean)V")
 
         hookBeforeIfEnabled(this, qqValueMethod) { param: MethodHookParam ->
             (param.thisObject as View).isClickable = false

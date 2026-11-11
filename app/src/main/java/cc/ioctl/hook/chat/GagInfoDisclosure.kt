@@ -147,15 +147,25 @@ object GagInfoDisclosure : CommonSwitchFunctionHook(
             }
         } else {
             val troopGagClass = Initiator.loadClass("com.tencent.mobileqq.troop.utils.TroopGagMgr")
-            val method = troopGagClass.declaredMethods.single { method ->
-                val params = method.parameterTypes; params.size == 5
-                && params[0] == Int::class.java
-                && params[1] == Long::class.java
-                && params[2] == Long::class.java
-                && params[3] == Long::class.java
-                && params[4] == ArrayList::class.java
-                && method.returnType == Void.TYPE
+            // 8.8.50: a(IJJJLjava/util/ArrayList;)V  → 8.8.98: s(IJJJLjava/util/ArrayList;)V
+            // 混淆名逐版本变，按签名 (int, long, long, long, ArrayList)void 定位；旧名 a 优先。
+            val candidates = troopGagClass.declaredMethods.filter { method ->
+                val params = method.parameterTypes
+                params.size == 5
+                    && params[0] == Integer.TYPE
+                    && params[1] == java.lang.Long.TYPE
+                    && params[2] == java.lang.Long.TYPE
+                    && params[3] == java.lang.Long.TYPE
+                    && params[4] == ArrayList::class.java
+                    && method.returnType == Void.TYPE
             }
+            val method = candidates.firstOrNull { it.name == "a" }
+                ?: candidates.firstOrNull()
+                ?: run {
+                    Log.w("GagInfoDisclosure: TroopGagMgr 中未找到 (int,long,long,long,ArrayList)void")
+                    return false
+                }
+            Log.d("GagInfoDisclosure: 命中 ${troopGagClass.name}.${method.name}(I,J,J,J,ArrayList)V")
             hookBeforeIfEnabled(method) { param ->
                 val selfUin = AppRuntimeHelper.getAccount()
                 val troopUin = param.args[1].toString()

@@ -58,14 +58,20 @@ object DisableLightInteraction : CommonSwitchFunctionHook(
 
     override fun initOnce(): Boolean {
         if (!classExists("com.tencent.qqnt.biz.lightbusiness.lightinteraction.LIAConfigManager")) {
-            // QQ 8.8.50：轻互动 = MessageForPokeEmo 消息，气泡由 PokeEmoItemBuilder 构建
-            "com.tencent.mobileqq.activity.aio.item.PokeEmoItemBuilder".toHostClass()
-                .singleMethod {
-                    returnType(View::class.java) &&
-                        parameterCount(5)
-                }.hookAfterIfEnabled(this) { param ->
-                    (param.result as? View)?.visibility = View.GONE
-                }
+            // QQ 8.8.50 / 8.8.98：轻互动 = MessageForPokeEmo 消息，气泡由 PokeEmoItemBuilder 构建。
+            // getView 在 8.8.50 是 a(ChatMessage,ViewHolder,View,BaseChatItemLayout,OnLongClickAndTouchListener)View，
+            // 8.8.98 改成 F(...)View（同签名）。这里按「5 参 + 返回 View」定位，不写死混淆名，旧名 a 优先。
+            val builderClass = "com.tencent.mobileqq.activity.aio.item.PokeEmoItemBuilder".toHostClass()
+            val getView = builderClass.declaredMethods.firstOrNull {
+                it.name == "a" && it.returnType == View::class.java && it.parameterTypes.size == 5
+            } ?: builderClass.declaredMethods.firstOrNull {
+                it.returnType == View::class.java && it.parameterTypes.size == 5
+            } ?: throw NoSuchMethodException(
+                "PokeEmoItemBuilder.getView(5 args)→View not found in ${builderClass.name}"
+            )
+            getView.hookAfterIfEnabled(this) { param ->
+                (param.result as? View)?.visibility = View.GONE
+            }
             return true
         }
         val kLIAConfigManager = Initiator.loadClass("com.tencent.qqnt.biz.lightbusiness.lightinteraction.LIAConfigManager")
