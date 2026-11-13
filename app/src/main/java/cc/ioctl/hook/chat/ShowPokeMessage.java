@@ -85,6 +85,8 @@ public class ShowPokeMessage extends CommonSwitchFunctionHook {
                 traceError(new IllegalStateException("未找到 AIOMsgPokeProcessor 的 List->List 方法"));
                 return false;
             }
+            XposedBridge.log("QA-TimAs: ShowPokeMessage hooked on "
+                    + target.getDeclaringClass().getName() + "#" + target.getName());
             HookUtils.hookAfterIfEnabled(this, target, new HookUtils.AfterHookedMethod() {
                 @Override
                 public void afterHookedMethod(XC_MethodHook.MethodHookParam param) {
@@ -94,6 +96,15 @@ public class ShowPokeMessage extends CommonSwitchFunctionHook {
                             return;
                         }
                         List<?> src = (List<?>) ret;
+                        // 诊断：把列表里所有消息的 msgType 打出来，便于判断 kernel 有没有下发戳一戳
+                        StringBuilder sb = new StringBuilder("QA-TimAs poke: list=" + src.size() + " types=[");
+                        for (int k = 0; k < src.size(); k++) {
+                            Object r0 = getRecord(src.get(k));
+                            sb.append(r0 == null ? "?" : String.valueOf(XposedHelpers.getIntField(r0, "msgType")));
+                            if (k != src.size() - 1) sb.append(",");
+                        }
+                        sb.append("]");
+                        XposedBridge.log(sb.toString());
                         ArrayList<Object> out = new ArrayList<>(src.size());
                         boolean changed = false;
                         for (int i = 0; i < src.size(); i++) {
