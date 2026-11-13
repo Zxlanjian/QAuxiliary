@@ -186,15 +186,12 @@ object ArkFallbackToText : CommonSwitchFunctionHook("qauxv_ark_fallback_to_text"
     override fun initOnce(): Boolean = throwOrTrue {
         val clazz = Initiator.loadClass(CLS_BUILDER)
 
-        // getView 被混淆成 a(...)（8.8.50）/ F(...)（8.8.98），按「5 个参数 + 返回 View」定位，旧名 a 优先
+        // getView 被混淆成 a(...)，按「5 个参数 + 返回 View」定位
         val getView = clazz.declaredMethods.firstOrNull {
-            it.name == "a" && it.parameterTypes.size == 5 && it.returnType == View::class.java
-        } ?: clazz.declaredMethods.firstOrNull {
             it.parameterTypes.size == 5 && it.returnType == View::class.java
         } ?: throw NoSuchMethodException(
             "getView(ChatMessage,ViewHolder,View,BaseChatItemLayout,OnLongClickAndTouchListener) not found in ${clazz.name}"
         )
-        Log.d("$TAG: 命中 ${clazz.name}.${getView.name}")
 
         getView.hookBefore(convertOrFallbackBeforeGetView)
 
