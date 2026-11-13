@@ -1,0 +1,101 @@
+# 一键构建「QAuxiliary + 三个新功能」的 APK
+# 用法：把本文件放到 fork 的 .github/workflows/build.yml，然后在 Actions 页面手动 Run workflow
+# 产物：Actions 运行页最下方的 Artifacts → TimAS-QA-arm64
+
+name: Build TimAS-QA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'app/src/main/java/cc/ioctl/hook/chat/**'
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-24.04
+    env:
+      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
+      CCACHE_NOHASHDIR: "true"
+      CCACHE_HARDLINK: "true"
+      CCACHE_BASEDIR: "${{ github.workspace }}"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: 'true'
+          fetch-depth: 0
+
+      - name: Config submodules
+        run: |
+          git -C "libs/LSPlant" config "submodule.test/src/main/jni/external/lsprism.update" none
+          git -C "libs/LSPlant" config "submodule.test/src/main/jni/external/lsparself.update" none
+          git -C "libs/LSPlant" config "submodule.docs/doxygen-awesome-css.update" none
+          git -C "libs/mmkv/MMKV" config "submodule.Python/pybind11.update" none
+          git submodule foreach git submodule update --init --recursive
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        run: |
+          mkdir -p "$ANDROID_HOME/licenses/"
+          echo -n 24333f8a63b6825ea9c5514f83c2829b004d1fee > "$ANDROID_HOME/licenses/android-sdk-license"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "cmake;3.31.0"
+          echo "sdk.dir=${ANDROID_HOME}" > local.properties
+
+      - name: Install ccache
+        run: |
+          sudo apt install -y ccache ninja-build
+          ccache -o max_size=1G
+          ccache -o hash_dir=false
+          ccache -o hard_link=true
+
+      - name: Cache native build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ccache
+            ~/.ccache
+            app/build/.lto-cache
+          key: native-${{ github.sha }}
+          restore-keys: native-
+
+      - name: Build
+        run: |
+          echo 'org.gradle.parallel=true' >> gradle.properties
+          sed -i 's/org.gradle.configuration-cache=true//g' gradle.properties
+          echo 'qauxv.override.ninja.path=/usr/bin/ninja' >> local.properties
+          echo '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' | base64 -d > keystore.jks
+          ./gradlew :app:synthesizeDistReleaseApksCI
+        env:
+          KEYSTORE_PATH: "../keystore.jks"
+          KEYSTORE_PASSWORD: "timas123456"
+          KEY_ALIAS: "timas"
+          KEY_PASSWORD: "timas123456"
+          QAUXV_OVERRIDE_CMAKE_VERSION: "3.31.0"
+
+      - name: Show result
+        run: |
+          echo "### 构建完成" >> $GITHUB_STEP_SUMMARY
+          find app/build/outputs/ci -name "*.apk" -exec sha256sum {} \; | tee -a $GITHUB_STEP_SUMMARY
+
+      - name: Upload arm64
+        uses: actions/upload-artifact@v4
+        with:
+          name: TimAS-QA-arm64
+          path: app/build/outputs/ci/*arm64.apk
+          if-no-files-found: warn
+
+      - name: Upload universal
+        uses: actions/upload-artifact@v4
+        with:
+          name: TimAS-QA-universal
+          path: app/build/outputs/ci/*universal.apk
+          if-no-files-found: warn
