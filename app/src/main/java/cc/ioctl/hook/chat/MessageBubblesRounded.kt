@@ -30,7 +30,6 @@ import io.github.qauxv.dsl.uiClickableItem
 import io.github.qauxv.hook.CommonSwitchFunctionHook
 import io.github.qauxv.util.Initiator
 import io.github.qauxv.util.xpcompat.XC_MethodHook
-import io.github.qauxv.util.xpcompat.XposedBridge
 import io.github.qauxv.util.xpcompat.XposedHelpers
 import me.ketal.data.ConfigData
 import me.ketal.util.ignoreResult
@@ -144,7 +143,7 @@ object MessageBubblesRounded : CommonSwitchFunctionHook("timas_bubble_rounded") 
             param.result = makeBubble(ctx, isSelf, dp(ctx, radii).toFloat(), top, bottom)
         } catch (t: Throwable) {
             // 出错就不改，走原生气泡
-            XposedBridge.log("QA-TimAs bubble: $t")
+            traceError(t)
         }
     }
 
