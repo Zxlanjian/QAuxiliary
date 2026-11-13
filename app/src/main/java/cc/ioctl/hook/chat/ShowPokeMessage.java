@@ -97,13 +97,27 @@ public class ShowPokeMessage extends CommonSwitchFunctionHook {
                         }
                         List<?> src = (List<?>) ret;
                         // 诊断：把列表里所有消息的 msgType 打出来，便于判断 kernel 有没有下发戳一戳
-                        StringBuilder sb = new StringBuilder("QA-TimAs poke: list=" + src.size() + " types=[");
+                        String mName = ((java.lang.reflect.Member) param.method).getName();
+                        StringBuilder sb = new StringBuilder("QA-TimAs poke[" + mName + "]: list=" + src.size() + " types=[");
+                        StringBuilder texts = new StringBuilder();
                         for (int k = 0; k < src.size(); k++) {
                             Object r0 = getRecord(src.get(k));
-                            sb.append(r0 == null ? "?" : String.valueOf(XposedHelpers.getIntField(r0, "msgType")));
+                            int t0 = -999;
+                            try {
+                                t0 = r0 == null ? -999 : XposedHelpers.getIntField(r0, "msgType");
+                            } catch (Throwable ignored) {
+                            }
+                            sb.append(t0);
                             if (k != src.size() - 1) sb.append(",");
+                            if (t0 == 2) {
+                                String txt = textOf(r0);
+                                if (txt != null && txt.length() > 0) {
+                                    texts.append(" [").append(k).append("]=")
+                                         .append(txt.length() > 24 ? txt.substring(0, 24) : txt);
+                                }
+                            }
                         }
-                        sb.append("]");
+                        sb.append("]").append(texts);
                         XposedBridge.log(sb.toString());
                         ArrayList<Object> out = new ArrayList<>(src.size());
                         boolean changed = false;
